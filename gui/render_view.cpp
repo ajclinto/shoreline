@@ -30,6 +30,9 @@ RENDER_VIEW::RENDER_VIEW(QGLFormat fmt,
     else
         m_path = "";
 
+    m_shared_name = "/slrender";
+    m_shared_name += std::to_string(getpid());
+
     // For pan/zoom
     setMouseTracking(true);
 
@@ -53,6 +56,9 @@ RENDER_VIEW::RENDER_VIEW(QGLFormat fmt,
         fmt.setVersion(3,0);
         setFormat(fmt);
     }
+
+    // Timer to handle image updates on the pipe
+    startTimer(100);
 }
 
 RENDER_VIEW::~RENDER_VIEW()
@@ -83,9 +89,6 @@ bool RENDER_VIEW::start_render()
         return false;
     }
 
-    if (!init_shared_memory())
-        return false;
-
     m_child = fork();
     if (m_child == -1)
     {
@@ -99,11 +102,11 @@ bool RENDER_VIEW::start_render()
         ::close(infd[0]);
         ::close(outfd[1]);
 
-		const char			*slrender = "../renderer/slrender";
-		const char			*args[256];
-		char				 inpipearg[64];
-		char				 outpipearg[64];
-		int					 sl_args = 0;
+        const char  *slrender = "../renderer/slrender";
+        const char  *args[256];
+        char         inpipearg[64];
+        char         outpipearg[64];
+        int          sl_args = 0;
 
         args[sl_args++] = slrender;
 
@@ -136,7 +139,6 @@ bool RENDER_VIEW::start_render()
 
     // Open the pipe for reading
     m_inpipe_fd = infd[0];
-    fcntl(m_inpipe_fd, O_NONBLOCK);
     m_inpipe = fdopen(m_inpipe_fd, "r");
 
     // Open the pipe for writing
@@ -144,33 +146,43 @@ bool RENDER_VIEW::start_render()
     m_outpipe = fdopen(m_outpipe_fd, "w");
 
     // Read the resolution
-    RES res;
-    if (!read(m_inpipe_fd, &res, sizeof(RES)))
+    if (read(m_inpipe_fd, &m_res, sizeof(RES)) <= 0)
     {
         return false;
     }
 
-    // Create the tile queue
-    int tcount = res.tile_count();
-    m_tiles.reserve(tcount);
+    // Initialize shared memory after reading m_res, since at this point we
+    // know the child process has created the shared buffer
+    if (!init_shared_memory())
+        return false;
+
+    // Create the tile queue for the first sample
     TILE tile;
-    for (tile.yoff = 0; tile.yoff < res.yres; tile.yoff += res.tres)
+    for (tile.yoff = 0; tile.yoff < m_res.yres; tile.yoff += m_res.tres)
     {
-        for (tile.xoff = 0; tile.xoff < res.xres; tile.xoff += res.tres)
+        for (tile.xoff = 0; tile.xoff < m_res.xres; tile.xoff += m_res.tres)
         {
-            tile.xsize = std::min(res.xres - tile.xoff, res.tres);
-            tile.ysize = std::min(res.yres - tile.yoff, res.tres);
-            m_tiles.push_back(tile);
+            tile.xsize = std::min(m_res.xres - tile.xoff, m_res.tres);
+            tile.ysize = std::min(m_res.yres - tile.yoff, m_res.tres);
+            m_tiles.push(tile);
         }
     }
-    m_current_tile = 0;
 
-    m_image.resize(res.xres, res.yres);
+    m_image.resize(m_res.xres, m_res.yres);
     m_image_dirty = true;
+
+    // Set the read fd to nonblocking for the notifier callback
+    fcntl(m_inpipe_fd, F_SETFL, O_NONBLOCK);
 
     // Register for events on the socket
     m_inpipe_notifier = new QSocketNotifier(m_inpipe_fd, QSocketNotifier::Read);
     connect(m_inpipe_notifier, SIGNAL(activated(int)), this, SLOT(socket_event(int)));
+
+    // Queue up the initial tiles
+    for (int i = 0; i < m_res.nthreads; i++)
+    {
+        send_tile(i);
+    }
 
     return true;
 }
@@ -178,27 +190,15 @@ bool RENDER_VIEW::start_render()
 bool
 RENDER_VIEW::init_shared_memory()
 {
-    m_shared_name = "/slrender";
-    m_shared_name += std::to_string(getpid());
-
     // Set up shared memory before fork
-    int shm_fd = shm_open(m_shared_name.c_str(),
-            O_CREAT | O_CLOEXEC | O_RDWR,
-            S_IRUSR | S_IWUSR);
+    int shm_fd = shm_open(m_shared_name.c_str(), O_RDWR, S_IRUSR | S_IWUSR);
     if (shm_fd == -1)
     {
         perror("shm_open");
         return false;
     }
 
-    size_t shm_size = 64*64*sizeof(uint);
-    if (ftruncate(shm_fd, shm_size) == -1)
-    {
-        perror("ftruncate");
-        return false;
-    }
-
-    m_shared_data = (uint*)mmap(NULL, shm_size,
+    m_shared_data = (uint*)mmap(NULL, m_res.shm_size(),
             PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
     if (m_shared_data == MAP_FAILED)
     {
@@ -515,35 +515,45 @@ void RENDER_VIEW::keyPressEvent(QKeyEvent *event)
 void RENDER_VIEW::socket_event(int fd)
 {
     assert(fd == m_inpipe_fd);
-    int msg;
-    while (read(fd, &msg, sizeof(int)))
+    TILE tile;
+    while (read(fd, &tile, sizeof(TILE)) > 0)
     {
-        if (msg == ASKTILE)
+        // Copy scanlines into the image
+        for (int y = 0; y < tile.ysize; y++)
         {
-            assert(m_current_tile < (int)m_tiles.size());
-            TILE tile = m_tiles[m_current_tile++];
-            if (!write(m_outpipe_fd, &tile, sizeof(TILE)))
-            {
-                perror("write failed");
-            }
+            memcpy(m_image.get_scan(tile.yoff + y) + tile.xoff,
+                   m_shared_data + m_res.tres*m_res.tres*tile.tid + y*tile.xsize,
+                   tile.xsize*sizeof(uint));
         }
-        else if (msg == TILEDATA)
-        {
-            TILE tile;
-            if (!read(fd, &tile, sizeof(TILE)))
-            {
-                perror("read failed");
-            }
+        m_image_dirty = true;
 
-            // Copy scanlines into the image
-            for (int y = 0; y < tile.ysize; y++)
-            {
-                memcpy(m_image.get_scan(tile.yoff + y) + tile.xoff,
-                       m_shared_data + y*tile.xsize, tile.xsize*sizeof(uint));
-            }
-            m_image_dirty = true;
+        send_tile(tile.tid);
+    }
+}
+
+void RENDER_VIEW::send_tile(int tid)
+{
+    if (!m_tiles.empty())
+    {
+        TILE tile = m_tiles.front();
+        tile.tid = tid;
+        m_tiles.pop();
+        if (write(m_outpipe_fd, &tile, sizeof(TILE)) < 0)
+        {
+            perror("write failed");
+        }
+
+        // Push the next sample
+        tile.sidx++;
+        if (tile.sidx < m_res.nsamples)
+        {
+            m_tiles.push(tile);
         }
     }
+}
+
+void RENDER_VIEW::timerEvent(QTimerEvent *)
+{
     if (m_image_dirty)
     {
         update();

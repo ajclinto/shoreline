@@ -10,6 +10,7 @@
 #include <QtGui>
 #include <QGLWidget>
 #include <QtOpenGL>
+#include <queue>
 #include "raster.h"
 #include "../h/tile.h"
 
@@ -25,6 +26,7 @@ public:
 protected:
     bool start_render();
     bool init_shared_memory();
+    void send_tile(int tid);
 
     virtual void        initializeGL();
     virtual void        resizeGL(int width, int height);
@@ -39,6 +41,7 @@ protected:
     virtual void        mouseReleaseEvent(QMouseEvent *event);
     virtual void        wheelEvent(QWheelEvent *event);
     virtual void        keyPressEvent(QKeyEvent *event);
+    virtual void        timerEvent(QTimerEvent *event);
 
 private slots:
     void    socket_event(int fd);
@@ -55,18 +58,18 @@ private:
     GLuint                  m_pbuffer;
 
     // Render process data
-	pid_t			 m_child;
-	int				 m_inpipe_fd;
-	FILE			*m_inpipe;
-    QSocketNotifier *m_inpipe_notifier;
-	int				 m_outpipe_fd;
-	FILE			*m_outpipe;
+    pid_t                m_child;
+    int                  m_inpipe_fd;
+    FILE                *m_inpipe;
+    QSocketNotifier     *m_inpipe_notifier;
+    int                  m_outpipe_fd;
+    FILE                *m_outpipe;
 
-	std::vector<TILE>	m_tiles;
-	int					m_current_tile = 0;
+    RES                  m_res;
+    std::queue<TILE>     m_tiles;
 
-	std::string		 m_shared_name;
-	uint            *m_shared_data;
+    std::string          m_shared_name;
+    uint                *m_shared_data;
 
     QPoint m_mousepos;
     QPoint m_offset;

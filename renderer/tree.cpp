@@ -147,11 +147,10 @@ void TREE::construct(int level, GROUP_NODE& local,
             // Create transformation nodes for the new subtree
             GROUP_NODE* child = new GROUP_NODE;
 
-            Imath::M44f t, rx, rz;
-            rx.setAxisAngle(Imath::V3f(1, 0, 0), radians(down));
-            rz.setAxisAngle(Imath::V3f(0, 0, 1), radians(rotation));
+            Imath::M44f t;
             t.translate(position);
-            child->set_transform(rx * rz * t);
+            t.rotate(Imath::V3f(radians(down), 0, radians(rotation)));
+            child->set_transform(t);
             local.add_child(child);
 
             // Recursively construct the subtree or a leaf
