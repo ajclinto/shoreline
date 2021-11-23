@@ -10,6 +10,7 @@
 #include <iostream>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <nlohmann/json.hpp>
 #include "tile.h"
 #include "ImathColor.h"
 #include "ImathColorAlgo.h"
@@ -90,9 +91,6 @@ int main(int argc, char *argv[])
     po::options_description desc("Options");
     desc.add_options()
         ("help", "produce help message")
-        ("shared_mem", po::value<std::string>()->required(), "shared memory file")
-        ("outpipe", po::value<int>()->required(), "output pipe")
-        ("inpipe", po::value<int>()->required(), "input pipe")
     ;
 
     po::variables_map vm;
@@ -114,17 +112,21 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    int outpipe_fd = vm["outpipe"].as<int>();
-    int inpipe_fd = vm["inpipe"].as<int>();
+    nlohmann::json json_scene;
+    std::cin >> json_scene;
+
+    int outpipe_fd = json_scene["outpipe"];
+    int inpipe_fd =  json_scene["inpipe"];
 
     RES res;
-    res.xres = 800;
-    res.yres = 600;
-    res.tres = 64;
-    res.nsamples = 16;
+    res.xres = json_scene["xres"];
+    res.yres = json_scene["yres"];
+    res.tres = json_scene["tres"];
+    res.nsamples = json_scene["samples"];
     res.nthreads = 4;
 
-    int shm_fd = shm_open(vm["shared_mem"].as<std::string>().c_str(),
+    std::string shm_name = json_scene["shared_mem"];
+    int shm_fd = shm_open(shm_name.c_str(),
                           O_CREAT | O_RDWR,
                           S_IRUSR | S_IWUSR);
     if (shm_fd < 0)
@@ -268,6 +270,8 @@ int main(int argc, char *argv[])
     // Embree cleanup
     rtcReleaseScene(scene);
     rtcReleaseDevice(device);
+
+    shm_unlink(shm_name.c_str());
 
     return 0;
 }

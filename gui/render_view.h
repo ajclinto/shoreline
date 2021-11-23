@@ -13,6 +13,7 @@
 #include <queue>
 #include "raster.h"
 #include "../h/tile.h"
+#include <nlohmann/json.hpp>
 
 // Render view
 class RENDER_VIEW : public QGLWidget { Q_OBJECT
@@ -23,9 +24,14 @@ public:
                          QStatusBar *status);
     virtual ~RENDER_VIEW();
 
-protected:
+    void parameter_changed(const char *name, int value);
+
+public slots:
     bool start_render();
-    bool init_shared_memory();
+    void stop_render();
+
+protected:
+    bool init_shm();
     void send_tile(int tid);
 
     virtual void        initializeGL();
@@ -44,32 +50,38 @@ protected:
     virtual void        timerEvent(QTimerEvent *event);
 
 private slots:
-    void    socket_event(int fd);
+    void    intile_event(int fd);
 
 private:
     RASTER<uint32_t>        m_image;
     bool                    m_image_dirty = true;
-    QStatusBar             *m_statusbar;
-    QLabel                 *m_statusmessage;
+    QStatusBar             *m_statusbar = nullptr;
+    QLabel                 *m_statusmessage = nullptr;
     std::string             m_path;
 
-    QGLShaderProgram       *m_program;
-    GLuint                  m_texture;
-    GLuint                  m_pbuffer;
+    QGLShaderProgram       *m_program = nullptr;
+    GLuint                  m_texture = 0;
+    GLuint                  m_pbuffer = 0;
 
-    // Render process data
-    pid_t                m_child;
-    int                  m_inpipe_fd;
-    FILE                *m_inpipe;
-    QSocketNotifier     *m_inpipe_notifier;
-    int                  m_outpipe_fd;
-    FILE                *m_outpipe;
 
+    // User scene file
+    nlohmann::json          m_scene;
+
+    // Render process connection
+    // {
+    pid_t                m_child = 0;
+    int                  m_outjson_fd = -1;
+    int                  m_intile_fd = -1;
+    QSocketNotifier     *m_intile_notifier = nullptr;
+    int                  m_outtile_fd = -1;
+    std::string          m_shm_name;
+    int                  m_shm_fd = -1;
+    uint                *m_shm_data = nullptr;
+    // }
+
+    // Tile queue (from the renderer)
     RES                  m_res;
     std::queue<TILE>     m_tiles;
-
-    std::string          m_shared_name;
-    uint                *m_shared_data;
 
     QPoint m_mousepos;
     QPoint m_offset;

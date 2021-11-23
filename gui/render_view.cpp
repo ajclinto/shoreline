@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sstream>
 
 
 RENDER_VIEW::RENDER_VIEW(QGLFormat fmt,
@@ -22,6 +23,11 @@ RENDER_VIEW::RENDER_VIEW(QGLFormat fmt,
     , m_texture(0)
     , m_pbuffer(0)
 {
+    m_scene["xres"] = 800;
+    m_scene["yres"] = 600;
+    m_scene["tres"] = 64;
+    m_scene["samples"] = 4;
+
     // Extract the path to the executable
     m_path = progname;
     size_t pos = m_path.rfind('/');
@@ -30,8 +36,8 @@ RENDER_VIEW::RENDER_VIEW(QGLFormat fmt,
     else
         m_path = "";
 
-    m_shared_name = "/slrender";
-    m_shared_name += std::to_string(getpid());
+    m_shm_name = "/slrender";
+    m_shm_name += std::to_string(getpid());
 
     // For pan/zoom
     setMouseTracking(true);
@@ -39,13 +45,6 @@ RENDER_VIEW::RENDER_VIEW(QGLFormat fmt,
     // For key events
     setFocusPolicy(Qt::ClickFocus);
     setFocus();
-
-    // Start a render (move to Render button)
-    if (!start_render())
-    {
-        fprintf(stderr, "Failed to start render\n");
-        exit(1);
-    }
 
     makeCurrent();
 
@@ -57,27 +56,38 @@ RENDER_VIEW::RENDER_VIEW(QGLFormat fmt,
         setFormat(fmt);
     }
 
+    // Start a render
+    if (!start_render())
+    {
+        fprintf(stderr, "Failed to start render\n");
+        exit(1);
+    }
+
     // Timer to handle image updates on the pipe
     startTimer(100);
 }
 
 RENDER_VIEW::~RENDER_VIEW()
 {
-    if (m_child > 0)
-        kill(m_child, SIGKILL);
-
-    if (m_inpipe) fclose(m_inpipe);
-    if (m_outpipe) fclose(m_outpipe);
-
-    if (m_shared_data)
-        shm_unlink(m_shared_name.c_str());
+    stop_render();
 }
 
 bool RENDER_VIEW::start_render()
 {
-    int                infd[2];
-    int                outfd[2];
+    stop_render();
 
+    // For sending the scene .json
+    int jsonfd[2];
+
+    // Tile messaging
+    int infd[2];
+    int outfd[2];
+
+    if (pipe(jsonfd) < 0)
+    {
+        perror("pipe failed");
+        return false;
+    }
     if (pipe(infd) < 0)
     {
         perror("pipe failed");
@@ -98,29 +108,19 @@ bool RENDER_VIEW::start_render()
 
     if (m_child == 0)
     {
+        // Copy to stdin
+        dup2(jsonfd[0], 0);
+
         // Close input for child
+        ::close(jsonfd[1]);
         ::close(infd[0]);
         ::close(outfd[1]);
 
         const char  *slrender = "../renderer/slrender";
         const char  *args[256];
-        char         inpipearg[64];
-        char         outpipearg[64];
         int          sl_args = 0;
 
         args[sl_args++] = slrender;
-
-        args[sl_args++] = "--shared_mem";
-        args[sl_args++] = m_shared_name.c_str();
-
-        args[sl_args++] = "--outpipe";
-        sprintf(inpipearg, "%d", infd[1]);
-        args[sl_args++] = inpipearg;
-
-        args[sl_args++] = "--inpipe";
-        sprintf(outpipearg, "%d", outfd[0]);
-        args[sl_args++] = outpipearg;
-
         args[sl_args] = NULL;
 
         if (execvp(slrender, (char * const *)args) == -1)
@@ -133,27 +133,33 @@ bool RENDER_VIEW::start_render()
         // Unreachable
     }
 
-    // Close output for parent
-    ::close(infd[1]);
-    ::close(outfd[0]);
+    ::close(jsonfd[0]); m_outjson_fd = jsonfd[1];
+    ::close(infd[1]);    m_intile_fd = infd[0];
+    ::close(outfd[0]);   m_outtile_fd = outfd[1];
 
-    // Open the pipe for reading
-    m_inpipe_fd = infd[0];
-    m_inpipe = fdopen(m_inpipe_fd, "r");
+    // 
+    m_scene["outpipe"] = infd[1];
+    m_scene["inpipe"] = outfd[0];
+    m_scene["shared_mem"] = m_shm_name;
 
-    // Open the pipe for writing
-    m_outpipe_fd = outfd[1];
-    m_outpipe = fdopen(m_outpipe_fd, "w");
+    // Write the scene to the child stdin
+    std::ostringstream oss;
+    oss << m_scene;
+    std::string str = oss.str();
+    if (write(m_outjson_fd, str.c_str(), str.size()) < 0)
+    {
+        return false;
+    }
 
     // Read the resolution
-    if (read(m_inpipe_fd, &m_res, sizeof(RES)) <= 0)
+    if (read(m_intile_fd, &m_res, sizeof(RES)) <= 0)
     {
         return false;
     }
 
     // Initialize shared memory after reading m_res, since at this point we
     // know the child process has created the shared buffer
-    if (!init_shared_memory())
+    if (!init_shm())
         return false;
 
     // Create the tile queue for the first sample
@@ -172,11 +178,11 @@ bool RENDER_VIEW::start_render()
     m_image_dirty = true;
 
     // Set the read fd to nonblocking for the notifier callback
-    fcntl(m_inpipe_fd, F_SETFL, O_NONBLOCK);
+    fcntl(m_intile_fd, F_SETFL, O_NONBLOCK);
 
     // Register for events on the socket
-    m_inpipe_notifier = new QSocketNotifier(m_inpipe_fd, QSocketNotifier::Read);
-    connect(m_inpipe_notifier, SIGNAL(activated(int)), this, SLOT(socket_event(int)));
+    m_intile_notifier = new QSocketNotifier(m_intile_fd, QSocketNotifier::Read);
+    connect(m_intile_notifier, &QSocketNotifier::activated, this, &RENDER_VIEW::intile_event);
 
     // Queue up the initial tiles
     for (int i = 0; i < m_res.nthreads; i++)
@@ -187,20 +193,42 @@ bool RENDER_VIEW::start_render()
     return true;
 }
 
+void RENDER_VIEW::stop_render()
+{
+    if (m_child > 0)
+    {
+        kill(m_child, SIGKILL);
+        m_child = 0;
+
+        munmap(m_shm_data, m_res.shm_size());
+        m_shm_data = nullptr;
+        ::close(m_shm_fd); m_shm_fd = -1;
+
+        delete m_intile_notifier;
+        m_intile_notifier = nullptr;
+
+        ::close(m_outjson_fd); m_outjson_fd = -1;
+        ::close(m_intile_fd);  m_intile_fd = -1;
+        ::close(m_outtile_fd); m_outtile_fd = -1;
+
+        m_tiles = std::queue<TILE>();
+    }
+}
+
 bool
-RENDER_VIEW::init_shared_memory()
+RENDER_VIEW::init_shm()
 {
     // Set up shared memory before fork
-    int shm_fd = shm_open(m_shared_name.c_str(), O_RDWR, S_IRUSR | S_IWUSR);
-    if (shm_fd == -1)
+    m_shm_fd = shm_open(m_shm_name.c_str(), O_RDWR, S_IRUSR | S_IWUSR);
+    if (m_shm_fd == -1)
     {
         perror("shm_open");
         return false;
     }
 
-    m_shared_data = (uint*)mmap(NULL, m_res.shm_size(),
-            PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    if (m_shared_data == MAP_FAILED)
+    m_shm_data = (uint*)mmap(NULL, m_res.shm_size(),
+            PROT_READ | PROT_WRITE, MAP_SHARED, m_shm_fd, 0);
+    if (m_shm_data == MAP_FAILED)
     {
         perror("mmap");
         return false;
@@ -512,22 +540,34 @@ void RENDER_VIEW::keyPressEvent(QKeyEvent *event)
     }
 }
 
-void RENDER_VIEW::socket_event(int fd)
+void RENDER_VIEW::intile_event(int fd)
 {
-    assert(fd == m_inpipe_fd);
+    assert(fd == m_intile_fd);
     TILE tile;
-    while (read(fd, &tile, sizeof(TILE)) > 0)
+    ssize_t bytes = read(fd, &tile, sizeof(TILE));
+    while (bytes > 0)
     {
         // Copy scanlines into the image
         for (int y = 0; y < tile.ysize; y++)
         {
             memcpy(m_image.get_scan(tile.yoff + y) + tile.xoff,
-                   m_shared_data + m_res.tres*m_res.tres*tile.tid + y*tile.xsize,
+                   m_shm_data + m_res.tres*m_res.tres*tile.tid + y*tile.xsize,
                    tile.xsize*sizeof(uint));
         }
         m_image_dirty = true;
 
         send_tile(tile.tid);
+        bytes = read(fd, &tile, sizeof(TILE));
+    }
+    if (bytes == 0)
+    {
+        // End of file (the child process exited)
+        stop_render();
+    }
+    else if (errno != EAGAIN && errno != EWOULDBLOCK)
+    {
+        // Errors other than an empty pipe
+        perror("read");
     }
 }
 
@@ -538,7 +578,7 @@ void RENDER_VIEW::send_tile(int tid)
         TILE tile = m_tiles.front();
         tile.tid = tid;
         m_tiles.pop();
-        if (write(m_outpipe_fd, &tile, sizeof(TILE)) < 0)
+        if (write(m_outtile_fd, &tile, sizeof(TILE)) < 0)
         {
             perror("write failed");
         }
@@ -558,4 +598,11 @@ void RENDER_VIEW::timerEvent(QTimerEvent *)
     {
         update();
     }
+}
+
+void RENDER_VIEW::parameter_changed(const char *name, int value)
+{
+    stop_render();
+    m_scene[name] = value;
+    start_render();
 }

@@ -34,9 +34,23 @@ MAIN_WINDOW::MAIN_WINDOW(const char *progname)
 
     m_renderview = new RENDER_VIEW(format, progname, this, statusBar());
 
+    m_dock = new QDockWidget(this);
+    m_dock->setWindowTitle("Parameters");
+    m_dock->setFixedWidth(150);
+    addDockWidget(Qt::RightDockWidgetArea, m_dock);
+    //m_samples = new QLineEdit;
+    m_samples = new QSlider(Qt::Horizontal);
+    m_samples->setMinimum(1);
+    m_samples->setMaximum(256);
+    m_dock->setWidget(m_samples);
+
+    connect(m_samples, &QSlider::valueChanged, this,
+            [&](int value) { m_renderview->parameter_changed("samples", value); }
+            );
+
     m_quit = new QAction(tr("&Quit"), this);
 
-    connect(m_quit, SIGNAL(triggered()), qApp, SLOT(quit()));
+    connect(m_quit, &QAction::triggered, qApp, &QCoreApplication::quit);
 
     m_file_menu = menuBar()->addMenu(tr("&File"));
     m_file_menu->addSeparator();
@@ -47,7 +61,15 @@ MAIN_WINDOW::MAIN_WINDOW(const char *progname)
     setCentralWidget(m_renderview);
 
     m_toolbar = new QToolBar("Tools");
-    m_toolbar->setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
+    m_toolbar->setAllowedAreas(Qt::TopToolBarArea);
+    m_toolbar->setFixedHeight(30);
+
+    m_render_action = m_toolbar->addAction("Render");
+    m_stop_action = m_toolbar->addAction("Stop");
+    connect(m_render_action, &QAction::triggered, m_renderview, &RENDER_VIEW::start_render);
+    connect(m_stop_action, &QAction::triggered, m_renderview, &RENDER_VIEW::stop_render);
+
+    addToolBar(Qt::TopToolBarArea, m_toolbar);
 }
 
 MAIN_WINDOW::~MAIN_WINDOW()
@@ -58,18 +80,6 @@ QSize
 MAIN_WINDOW::sizeHint() const
 {
     return theDefaultSize;
-}
-
-void
-MAIN_WINDOW::toolbar(bool value)
-{
-    if (value)
-    {
-        addToolBar(Qt::TopToolBarArea, m_toolbar);
-        m_toolbar->show();
-    }
-    else
-        removeToolBar(m_toolbar);
 }
 
 QActionGroup *

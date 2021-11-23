@@ -27,14 +27,22 @@ private:
                                            int count,
                                            int def_action);
 
-public slots:
-    void    toolbar(bool value);
-
 private:
     QMenu             *m_file_menu;
     QAction           *m_quit;
-    QToolBar          *m_toolbar;
+
+    // Central widget
     RENDER_VIEW       *m_renderview;
+
+    // Top toolbar
+    QToolBar          *m_toolbar;
+    QAction           *m_render_action;
+    QAction           *m_stop_action;
+
+    // Right dock
+    QDockWidget       *m_dock;
+    QVBoxLayout       *m_dock_layout;
+    QSlider           *m_samples;
 };
 
 #endif

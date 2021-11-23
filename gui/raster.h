@@ -15,9 +15,12 @@ class RASTER {
 public:
     void resize(int width, int height)
     {
-        m_width = width;
-        m_height = height;
-        m_data.resize(width*height);
+        if (width != m_width || height != m_height)
+        {
+            m_width = width;
+            m_height = height;
+            m_data.assign(width*height, T());
+        }
     }
 
     int width() const       { return m_width; }
