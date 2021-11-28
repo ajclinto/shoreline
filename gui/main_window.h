@@ -10,6 +10,7 @@
 #include <QtGui>
 #include <QGLWidget>
 #include <QtOpenGL>
+#include <nlohmann/json.hpp>
 
 class RENDER_VIEW;
 
@@ -42,7 +43,8 @@ private:
     // Right dock
     QDockWidget       *m_dock;
     QVBoxLayout       *m_dock_layout;
-    QSlider           *m_samples;
+    QWidget           *m_params;
+    nlohmann::json     m_json_ui;
 };
 
 #endif

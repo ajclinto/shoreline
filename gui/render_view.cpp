@@ -56,13 +56,6 @@ RENDER_VIEW::RENDER_VIEW(QGLFormat fmt,
         setFormat(fmt);
     }
 
-    // Start a render
-    if (!start_render())
-    {
-        fprintf(stderr, "Failed to start render\n");
-        exit(1);
-    }
-
     // Timer to handle image updates on the pipe
     startTimer(100);
 }
@@ -213,6 +206,26 @@ void RENDER_VIEW::stop_render()
 
         m_tiles = std::queue<TILE>();
     }
+}
+
+void RENDER_VIEW::store_snapshot()
+{
+    m_snapshot = m_image;
+    m_snapshot_dirty = true;
+}
+
+void RENDER_VIEW::toggle_snapshot()
+{
+    m_snapshot_active = !m_snapshot_active;
+    if (m_snapshot_active)
+    {
+        m_snapshot_dirty = true;
+    }
+    else
+    {
+        m_image_dirty = true;
+    }
+    update();
 }
 
 bool
@@ -373,16 +386,34 @@ RENDER_VIEW::resizeGL(int width, int height)
 void
 RENDER_VIEW::paintGL()
 {
-    if (m_image_dirty)
+    const RASTER<uint32_t> *image = nullptr;
+    if (m_snapshot_active)
+    {
+        if (m_snapshot_dirty)
+        {
+            image = &m_snapshot;
+            m_snapshot_dirty = false;
+        }
+    }
+    else
+    {
+        if (m_image_dirty)
+        {
+            image = &m_image;
+            m_image_dirty = false;
+        }
+    }
+
+    if (image)
     {
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, m_pbuffer);
 
-        glBufferData(GL_PIXEL_UNPACK_BUFFER, m_image.bytes(), 0, GL_STREAM_DRAW);
+        glBufferData(GL_PIXEL_UNPACK_BUFFER, image->bytes(), 0, GL_STREAM_DRAW);
 
         uint32_t *data = (uint32_t *)glMapBufferARB(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
         assert(data);
 
-        memcpy(data, m_image.data(), m_image.bytes());
+        memcpy(data, image->data(), image->bytes());
 
         glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
 
@@ -390,14 +421,12 @@ RENDER_VIEW::paintGL()
         glBindTexture(GL_TEXTURE_RECTANGLE, m_texture);
 
         glTexImage2D(GL_TEXTURE_RECTANGLE, 0, GL_RGBA,
-                m_image.width(), m_image.height(), 0, GL_RGBA,
+                image->width(), image->height(), 0, GL_RGBA,
                 GL_UNSIGNED_BYTE, 0 /* offset in PBO */);
 
         // Unbind the buffer - this is required for text rendering to work
         // correctly.
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-
-        m_image_dirty = false;
     }
 
     if (m_program)
@@ -448,6 +477,21 @@ RENDER_VIEW::paintGL()
     {
         m_program->release();
     }
+
+    QFont font;
+    QFontMetrics metrics(font);
+    int tx = 4;
+    int ty = 4+metrics.height();
+    QString str;
+    if (m_snapshot_active)
+    {
+        str = "Snapshot";
+    }
+    else
+    {
+        str = "Active Render";
+    }
+    renderText(tx, ty, str, font);
 }
 
 bool
@@ -600,9 +644,16 @@ void RENDER_VIEW::timerEvent(QTimerEvent *)
     }
 }
 
-void RENDER_VIEW::parameter_changed(const char *name, int value)
+void RENDER_VIEW::set_parameter(const std::string &name, int value)
 {
-    stop_render();
     m_scene[name] = value;
+
+    start_render();
+}
+
+void RENDER_VIEW::set_parameter(const std::string &name, double value)
+{
+    m_scene[name] = value;
+
     start_render();
 }

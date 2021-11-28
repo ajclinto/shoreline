@@ -7,6 +7,8 @@
 #include "main_window.h"
 #include "render_view.h"
 #include <QtGui>
+#include <fstream>
+#include <iostream>
 
 static const QSize        theDefaultSize(1024, 768);
 
@@ -38,15 +40,64 @@ MAIN_WINDOW::MAIN_WINDOW(const char *progname)
     m_dock->setWindowTitle("Parameters");
     m_dock->setFixedWidth(150);
     addDockWidget(Qt::RightDockWidgetArea, m_dock);
-    //m_samples = new QLineEdit;
-    m_samples = new QSlider(Qt::Horizontal);
-    m_samples->setMinimum(1);
-    m_samples->setMaximum(256);
-    m_dock->setWidget(m_samples);
 
-    connect(m_samples, &QSlider::valueChanged, this,
-            [&](int value) { m_renderview->parameter_changed("samples", value); }
-            );
+    {
+        std::unique_ptr<FILE, decltype(&pclose)> pipe(popen("../renderer/slrender --dump_ui", "r"), pclose);
+        if (!pipe) {
+            throw std::runtime_error("popen() failed!");
+        }
+        std::string ss;
+        std::array<char, 256> buf;
+        while (fgets(buf.data(), buf.size(), pipe.get()) != nullptr)
+        {
+            ss += buf.data();
+        }
+        m_json_ui = nlohmann::json::parse(ss);
+    }
+
+    auto layout = new QGridLayout;
+    m_params = new QWidget;
+    m_params->setLayout(layout);
+    m_dock->setWidget(m_params);
+    int row = 0;
+    for (const auto &json_p : m_json_ui)
+    {
+        const auto &name = json_p["name"];
+        layout->addWidget(new QLabel(QString(name.get<std::string>().c_str()), m_params), row, 0);
+
+        if (json_p["type"] == "float")
+        {
+            auto *p = new QDoubleSpinBox(m_params);
+            layout->addWidget(p, row, 1);
+            p->setMinimum(json_p["min"]);
+            p->setMaximum(json_p["max"]);
+
+            double def = json_p["default"];
+            m_renderview->set_parameter(name, def);
+            p->setValue(def);
+
+            connect(p, static_cast<void (QDoubleSpinBox::*)(double)>(&QDoubleSpinBox::valueChanged), this,
+                    [&](double value) { m_renderview->set_parameter(name, value); }
+                    );
+        }
+        else
+        {
+            auto *p = new QSlider(Qt::Horizontal, m_params);
+            layout->addWidget(p, row, 1);
+            p->setMinimum(json_p["min"]);
+            p->setMaximum(json_p["max"]);
+
+            int def = json_p["default"];
+            m_renderview->set_parameter(name, def);
+            p->setValue(def);
+
+            connect(p, &QSlider::valueChanged, this,
+                    [&](int value) { m_renderview->set_parameter(name, value); }
+                    );
+        }
+
+        row++;
+    }
 
     m_quit = new QAction(tr("&Quit"), this);
 
@@ -66,10 +117,16 @@ MAIN_WINDOW::MAIN_WINDOW(const char *progname)
 
     m_render_action = m_toolbar->addAction("Render");
     m_stop_action = m_toolbar->addAction("Stop");
+    auto snapshot_action = m_toolbar->addAction("Take Snapshot");
+    auto toggle_action = m_toolbar->addAction("Toggle Snapshot");
     connect(m_render_action, &QAction::triggered, m_renderview, &RENDER_VIEW::start_render);
     connect(m_stop_action, &QAction::triggered, m_renderview, &RENDER_VIEW::stop_render);
+    connect(snapshot_action, &QAction::triggered, m_renderview, &RENDER_VIEW::store_snapshot);
+    connect(toggle_action, &QAction::triggered, m_renderview, &RENDER_VIEW::toggle_snapshot);
 
     addToolBar(Qt::TopToolBarArea, m_toolbar);
+
+    m_renderview->start_render();
 }
 
 MAIN_WINDOW::~MAIN_WINDOW()

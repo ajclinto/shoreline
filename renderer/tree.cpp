@@ -44,6 +44,39 @@ void POLY_CURVE::embree_geometry(const Imath::M44f &m, RTCDevice device, RTCScen
     rtcReleaseGeometry(geom);
 }
 
+void PLANE::embree_geometry(RTCDevice device, RTCScene scene) const
+{
+    RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_GRID);
+
+    RTCGrid* grid = (RTCGrid*) rtcSetNewGeometryBuffer(geom,
+                                                       RTC_BUFFER_TYPE_GRID,
+                                                       0,
+                                                       RTC_FORMAT_GRID,
+                                                       sizeof(RTCGrid),
+                                                       1);
+    grid->startVertexID = 0;
+    grid->width = 2;
+    grid->height = 2;
+    grid->stride = 2;
+
+    Imath::V3f* vertices = (Imath::V3f*) rtcSetNewGeometryBuffer(geom,
+                                                       RTC_BUFFER_TYPE_VERTEX,
+                                                       0,
+                                                       RTC_FORMAT_FLOAT3,
+                                                       sizeof(Imath::V3f),
+                                                       4);
+
+    vertices[0] = m_p - m_u - m_v;
+    vertices[1] = m_p - m_u + m_v;
+    vertices[2] = m_p + m_u - m_v;
+    vertices[3] = m_p + m_u + m_v;
+
+    rtcCommitGeometry(geom);
+
+    rtcAttachGeometry(scene, geom);
+    rtcReleaseGeometry(geom);
+}
+
 void TREE::build()
 {
     printf("Constructing tree... levels %d\n", levels);

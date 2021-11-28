@@ -24,11 +24,15 @@ public:
                          QStatusBar *status);
     virtual ~RENDER_VIEW();
 
-    void parameter_changed(const char *name, int value);
+    void set_parameter(const std::string &name, int value);
+    void set_parameter(const std::string &name, double value);
 
 public slots:
     bool start_render();
     void stop_render();
+
+    void store_snapshot();
+    void toggle_snapshot();
 
 protected:
     bool init_shm();
@@ -54,7 +58,7 @@ private slots:
 
 private:
     RASTER<uint32_t>        m_image;
-    bool                    m_image_dirty = true;
+    bool                    m_image_dirty = false;
     QStatusBar             *m_statusbar = nullptr;
     QLabel                 *m_statusmessage = nullptr;
     std::string             m_path;
@@ -63,6 +67,10 @@ private:
     GLuint                  m_texture = 0;
     GLuint                  m_pbuffer = 0;
 
+    // Snapshots
+    RASTER<uint32_t>        m_snapshot;
+    bool                    m_snapshot_dirty = false;
+    bool                    m_snapshot_active = false;
 
     // User scene file
     nlohmann::json          m_scene;

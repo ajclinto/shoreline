@@ -52,6 +52,19 @@ public:
     std::vector<std::pair<Imath::V3f, float>> m_pos_r;
 };
 
+class PLANE
+{
+public:
+    PLANE(const Imath::V3f &p, const Imath::V3f &u, const Imath::V3f &v) : m_p(p), m_u(u), m_v(v) {}
+
+    virtual void embree_geometry(RTCDevice device, RTCScene scene) const;
+
+private:
+    Imath::V3f m_p;
+    Imath::V3f m_u;
+    Imath::V3f m_v;
+};
+
 // A simple subset of the Weber-Penn tree model
 class TREE {
 public:
