@@ -30,6 +30,7 @@ private:
 
 private:
     QMenu             *m_file_menu;
+    QAction           *m_save;
     QAction           *m_quit;
 
     // Central widget
@@ -45,6 +46,40 @@ private:
     QVBoxLayout       *m_dock_layout;
     QWidget           *m_params;
     nlohmann::json     m_json_ui;
+};
+
+class COLOR_WIDGET : public QPushButton { Q_OBJECT
+public:
+    COLOR_WIDGET(const QColor &color, QWidget* parent)
+        : QPushButton(parent)
+    {
+        setColor(color);
+        connect( this, SIGNAL(clicked()), this, SLOT(changeColor()) );
+    }
+
+signals:
+    void valueChanged(const QColor &color);
+
+public slots:
+    void changeColor()
+    {
+        QColorDialog *dialog = new QColorDialog(m_color, parentWidget());
+        connect(dialog, &QColorDialog::currentColorChanged, this, &COLOR_WIDGET::setColor);
+        connect(dialog, &QColorDialog::colorSelected, this, &COLOR_WIDGET::setColor);
+        dialog->show();
+    }
+    void setColor(const QColor& color)
+    {
+        if (color != m_color)
+        {
+            m_color = color;
+            setStyleSheet("background-color: " + m_color.name() + "; border:none;");
+            valueChanged(m_color);
+        }
+    }
+
+private:
+    QColor m_color;
 };
 
 #endif

@@ -44,7 +44,9 @@ public:
     void mis_sample(const SUN_SKY_LIGHT &light,
                     Imath::C3f &b_clr, Imath::V3f &b_dir,
                     Imath::C3f &l_clr, Imath::V3f &l_dir,
-                    const Imath::V3f &n, float sx, float sy) const;
+                    const Imath::V3f &n,
+                    float bsx, float bsy,
+                    float lsx, float lsy) const;
 
 private:
     Imath::C3f m_clr;

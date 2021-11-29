@@ -60,32 +60,30 @@ RTCScene initializeScene(RTCDevice device)
     return scene;
 }
 
-inline float sobol2(unsigned int n, unsigned int seed)
+inline float sample_to_float(uint32_t n, uint32_t seed)
 {
-    for (unsigned int v = 1 << 31; n != 0; n >>= 1, v ^= v >> 1)
-    {
-        if (n & 0x1) seed ^= v;
-    }
-    return (float)seed / (float)0x100000000LL;
+    n ^= seed;
+    return (float)n / (float)0x100000000LL;
 }
 
-inline float vandercorput(unsigned int n, unsigned int seed)
+inline uint32_t sobol2(uint32_t n)
+{
+    uint32_t x = 0;
+    for (uint32_t v = 1 << 31; n != 0; n >>= 1, v ^= v >> 1)
+    {
+        if (n & 0x1) x ^= v;
+    }
+    return x;
+}
+
+inline uint32_t vandercorput(uint32_t n)
 {
     n = (n << 16) | (n >> 16);
     n = ((n & 0x00ff00ff) << 8) | ((n & 0xff00ff00) >> 8);
     n = ((n & 0x0f0f0f0f) << 4) | ((n & 0xf0f0f0f0) >> 4);
     n = ((n & 0x33333333) << 2) | ((n & 0xcccccccc) >> 2);
     n = ((n & 0x55555555) << 1) | ((n & 0xaaaaaaaa) >> 1);
-    n ^= seed;
-    return (float)n / (float)0x100000000LL;
-}
-
-inline void sobol02(unsigned int n,
-                    unsigned int seedx, unsigned int seedy,
-                    float &sx, float &sy)
-{
-    sx = vandercorput(n, seedx);
-    sy = sobol2(n, seedy);
+    return n;
 }
 
 static inline void init_ray(RTCRay &ray, const Imath::V3f &org, const Imath::V3f &dir)
@@ -108,8 +106,6 @@ static inline void init_rayhit(RTCRayHit &rayhit, const Imath::V3f &org, const I
     rayhit.hit.geomID = RTC_INVALID_GEOMETRY_ID;
     rayhit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 }
-
-static std::mutex s_tile_mutex;
 
 int main(int argc, char *argv[])
 {
@@ -159,29 +155,61 @@ int main(int argc, char *argv[])
                 {"name", "tres"},
                 {"type", "int"},
                 {"default", 64},
+                {"scale", "log"},
                 {"min", 1},
-                {"max", 256}
+                {"max", 1024}
+            },
+            {
+                {"name", "nthreads"},
+                {"type", "int"},
+                {"default", 4},
+                {"scale", "log"},
+                {"min", 1},
+                {"max", 128}
             },
             {
                 {"name", "samples"},
                 {"type", "int"},
                 {"default", 16},
+                {"scale", "log"},
                 {"min", 1},
-                {"max", 256}
+                {"max", 1024}
             },
             {
                 {"name", "sun_elevation"},
                 {"type", "float"},
-                {"default", 30.0},
+                {"default", 50.0},
                 {"min", 0.0},
                 {"max", 90.0}
             },
             {
                 {"name", "sun_azimuth"},
                 {"type", "float"},
-                {"default", 0.0},
+                {"default", 20.0},
                 {"min", 0.0},
                 {"max", 360.0}
+            },
+            {
+                {"name", "sun_ratio"},
+                {"type", "float"},
+                {"default", 0.8},
+                {"min", 0.0},
+                {"max", 1.0}
+            },
+            {
+                {"name", "sun_color"},
+                {"type", "color"},
+                {"default", {1.0, 0.75, 0.75}}
+            },
+            {
+                {"name", "sky_color"},
+                {"type", "color"},
+                {"default", {0.75, 0.75, 1.0}}
+            },
+            {
+                {"name", "diffuse_color"},
+                {"type", "color"},
+                {"default", {0.75, 0.75, 0.75}}
             }
         };
         std::cout << json_ui;
@@ -198,8 +226,12 @@ int main(int argc, char *argv[])
     res.xres = json_scene["xres"];
     res.yres = json_scene["yres"];
     res.tres = json_scene["tres"];
+    res.nthreads = json_scene["nthreads"];
     res.nsamples = json_scene["samples"];
-    res.nthreads = 4;
+
+    // Prevent rendering different samples of the same tile in different
+    // threads
+    res.nthreads = std::min(res.nthreads, res.tile_count());
 
     std::string shm_name = json_scene["shared_mem"];
     int shm_fd = shm_open(shm_name.c_str(),
@@ -230,7 +262,7 @@ int main(int argc, char *argv[])
         perror("write");
     }
 
-    int tcount = res.tile_count();
+    int tcount = res.tile_count() * res.nsamples;
 
     // Embree setup
     RTCDevice device = initializeDevice();
@@ -255,18 +287,12 @@ int main(int argc, char *argv[])
     };
 
     std::vector<THREAD_DATA> thread_data(res.nthreads);
-    std::vector<TILE> tiles(res.nthreads);
 
     for (int i = 0; i < res.nthreads; i++)
     {
-        TILE &tile = tiles[i];
-        if (read(inpipe_fd, &tile, sizeof(TILE)) < 0)
-        {
-            perror("read");
-        }
-
         thread_data[i].rayhits.resize(res.tres * res.tres);
         thread_data[i].occrays.resize(res.tres * res.tres * 2);
+        thread_data[i].shadow_test.reserve(res.tres * res.tres * 2);
         rtcInitIntersectContext(&thread_data[i].context);
     }
 
@@ -276,7 +302,7 @@ int main(int argc, char *argv[])
     // rendered image not change when the tile size changes.
     // {
     Imath::Rand32 pixel_rand;
-    std::vector<uint32_t> seeds(4);
+    std::vector<uint32_t> seeds(16);
     for (auto &seed : seeds)
     {
         seed = pixel_rand.nexti();
@@ -297,9 +323,17 @@ int main(int argc, char *argv[])
     };
     // }
 
-    int tiles_pushed = tiles.size();
-    tbb::parallel_for_each(tiles.begin(), tiles.end(), [&](TILE &tile, tbb::feeder<TILE>& feeder)
+    // Note the use of grain size == 1 and simple_partitioner below to ensure
+    // we get exactly tcount tasks
+    tbb::parallel_for(tbb::blocked_range<int>(0,tcount,1),
+                       [&](tbb::blocked_range<int>)
     {
+        TILE tile;
+        if (read(inpipe_fd, &tile, sizeof(TILE)) < 0)
+        {
+            perror("read");
+        }
+
         auto &context = thread_data[tile.tid].context;
         auto &rayhits = thread_data[tile.tid].rayhits;
         auto &occrays = thread_data[tile.tid].occrays;
@@ -314,9 +348,11 @@ int main(int argc, char *argv[])
                 int px = x + tile.xoff;
                 int py = y + tile.yoff;
                 int ioff = py * res.xres + px;
-                float sx, sy;
                 uint32_t h_ioff = p_hash_eval(px, py);
-                sobol02(tile.sidx, h_ioff^seeds[0], h_ioff^seeds[1], sx, sy);
+                uint32_t isx = h_ioff ^ vandercorput(tile.sidx);
+                uint32_t isy = h_ioff ^ sobol2(tile.sidx);
+                float sx = sample_to_float(isx, seeds[0]);
+                float sy = sample_to_float(isy, seeds[1]);
                 float dx = (tile.xoff + x + sx) / (float)res.xres;
                 float dz = (tile.yoff + y + sy) / (float)res.yres;
                 dx = dx - 0.5F;
@@ -362,14 +398,19 @@ int main(int argc, char *argv[])
                     SHADOW_TEST test;
                     test.ioff = ioff;
 
-                    float sx, sy;
-                    sobol02(tile.sidx, h_ioff^seeds[2], h_ioff^seeds[3], sx, sy);
+                    uint32_t isx = h_ioff ^ vandercorput(tile.sidx);
+                    uint32_t isy = h_ioff ^ sobol2(tile.sidx);
+                    float bsx = sample_to_float(isx, seeds[2]);
+                    float bsy = sample_to_float(isy, seeds[3]);
+                    float lsx = sample_to_float(isx, seeds[4]);
+                    float lsy = sample_to_float(isy, seeds[5]);
 
                     Imath::C3f b_clr;
                     Imath::V3f b_dir;
                     Imath::C3f l_clr;
                     Imath::V3f l_dir;
-                    brdf.mis_sample(light, b_clr, b_dir, l_clr, l_dir, n, sx, sy);
+
+                    brdf.mis_sample(light, b_clr, b_dir, l_clr, l_dir, n, bsx, bsy, lsx, lsy);
 
                     if (b_clr != Imath::V3f(0))
                     {
@@ -423,22 +464,12 @@ int main(int argc, char *argv[])
             }
         }
 
-        std::lock_guard<std::mutex> lock(s_tile_mutex);
-
         if (write(outpipe_fd, &tile, sizeof(TILE)) < 0)
         {
             perror("write");
         }
 
-        if (tiles_pushed++ < tcount)
-        {
-            if (read(inpipe_fd, &tile, sizeof(TILE)) < 0)
-            {
-                perror("read");
-            }
-            feeder.add(tile);
-        }
-    });
+    }, tbb::simple_partitioner());
     printf("done %d tiles\n", tcount);
 
     // Embree cleanup

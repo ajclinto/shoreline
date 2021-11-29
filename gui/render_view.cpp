@@ -23,11 +23,6 @@ RENDER_VIEW::RENDER_VIEW(QGLFormat fmt,
     , m_texture(0)
     , m_pbuffer(0)
 {
-    m_scene["xres"] = 800;
-    m_scene["yres"] = 600;
-    m_scene["tres"] = 64;
-    m_scene["samples"] = 4;
-
     // Extract the path to the executable
     m_path = progname;
     size_t pos = m_path.rfind('/');
@@ -178,6 +173,7 @@ bool RENDER_VIEW::start_render()
     connect(m_intile_notifier, &QSocketNotifier::activated, this, &RENDER_VIEW::intile_event);
 
     // Queue up the initial tiles
+    m_tiles_complete = 0;
     for (int i = 0; i < m_res.nthreads; i++)
     {
         send_tile(i);
@@ -216,16 +212,19 @@ void RENDER_VIEW::store_snapshot()
 
 void RENDER_VIEW::toggle_snapshot()
 {
-    m_snapshot_active = !m_snapshot_active;
-    if (m_snapshot_active)
+    if (!m_snapshot.empty())
     {
-        m_snapshot_dirty = true;
+        m_snapshot_active = !m_snapshot_active;
+        if (m_snapshot_active)
+        {
+            m_snapshot_dirty = true;
+        }
+        else
+        {
+            m_image_dirty = true;
+        }
+        update();
     }
-    else
-    {
-        m_image_dirty = true;
-    }
-    update();
 }
 
 bool
@@ -481,7 +480,7 @@ RENDER_VIEW::paintGL()
     QFont font;
     QFontMetrics metrics(font);
     int tx = 4;
-    int ty = 4+metrics.height();
+    int ty = metrics.height();
     QString str;
     if (m_snapshot_active)
     {
@@ -489,7 +488,9 @@ RENDER_VIEW::paintGL()
     }
     else
     {
-        str = "Active Render";
+        str = "Active Render ";
+        str += std::to_string(m_tiles_complete * 100 / (m_res.tile_count() * m_res.nsamples)).c_str();
+        str += "%";
     }
     renderText(tx, ty, str, font);
 }
@@ -582,6 +583,11 @@ void RENDER_VIEW::keyPressEvent(QKeyEvent *event)
 
         update();
     }
+    else if (event->key() == Qt::Key_Left ||
+             event->key() == Qt::Key_Right)
+    {
+        toggle_snapshot();
+    }
 }
 
 void RENDER_VIEW::intile_event(int fd)
@@ -598,6 +604,8 @@ void RENDER_VIEW::intile_event(int fd)
                    m_shm_data + m_res.tres*m_res.tres*tile.tid + y*tile.xsize,
                    tile.xsize*sizeof(uint));
         }
+
+        m_tiles_complete++;
         m_image_dirty = true;
 
         send_tile(tile.tid);
@@ -647,13 +655,17 @@ void RENDER_VIEW::timerEvent(QTimerEvent *)
 void RENDER_VIEW::set_parameter(const std::string &name, int value)
 {
     m_scene[name] = value;
-
-    start_render();
+    if (!m_image.empty()) start_render();
 }
 
 void RENDER_VIEW::set_parameter(const std::string &name, double value)
 {
     m_scene[name] = value;
+    if (!m_image.empty()) start_render();
+}
 
-    start_render();
+void RENDER_VIEW::set_parameter(const std::string &name, const QColor &value)
+{
+    m_scene[name] = {value.redF(), value.greenF(), value.blueF()};
+    if (!m_image.empty()) start_render();
 }

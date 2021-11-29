@@ -25,7 +25,8 @@ public:
 
     int width() const       { return m_width; }
     int height() const      { return m_height; }
-    size_t  bytes() const   { return m_width*m_height*sizeof(T); }
+    size_t bytes() const    { return m_data.size()*sizeof(T); }
+    bool empty() const      { return m_data.empty(); }
     const T *data() const   { return m_data.data(); }
     T *data()               { return m_data.data(); }
 
@@ -36,8 +37,8 @@ public:
 
 private:
 	std::vector<T>	m_data;
-	int				m_width;
-	int				m_height;
+	int				m_width = 0;
+	int				m_height = 0;
 };
 
 #endif

@@ -26,15 +26,23 @@ static void get_basis(const Imath::V3f &n, Imath::V3f &u, Imath::V3f &v)
     }
 }
 
+static Imath::C3f json_to_color(const nlohmann::json &clr)
+{
+    return Imath::C3f(pow(clr[0], 2.2), pow(clr[1], 2.2), pow(clr[2], 2.2));
+}
+
 SUN_SKY_LIGHT::SUN_SKY_LIGHT(const nlohmann::json &parameters)
 {
-    m_sun_clr = Imath::C3f(1.0, 0.5, 0.5);
-    m_sky_clr = Imath::C3f(0.5, 0.5, 1.0);
-    m_sun_dir = Imath::V3f(1.0, 1.0, 1.0);
+    m_sun_clr = json_to_color(parameters["sun_color"]);
+    m_sky_clr = json_to_color(parameters["sky_color"]);
+    m_sun_dir = Imath::V3f(1.0, 0.0, 0.0);
+    Imath::M44f r;
+    r.rotate(Imath::V3f(0.0F, -radians(parameters["sun_elevation"]), radians(parameters["sun_azimuth"])));
+    m_sun_dir *= r;
     m_sun_dir.normalize();
-    m_sun_angle = radians(0.5F);
+    m_sun_angle = radians(32.0F / 60.0F);
     m_sun_h = 1.0-cos(m_sun_angle);
-    m_sun_ratio = 0.8F;
+    m_sun_ratio = parameters["sun_ratio"];
 
     // Precompute a basis to sample the sun
     get_basis(m_sun_dir, m_sun_u, m_sun_v);
@@ -56,30 +64,21 @@ void SUN_SKY_LIGHT::sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, float s
 
 void SUN_SKY_LIGHT::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir) const
 {
-    // Clipped to the +z hemisphere
-    if (dir[2] > 0.0F)
+    if (dir.dot(m_sun_dir) > 1.0F-m_sun_h)
     {
-        if (dir.dot(m_sun_dir) > 1.0F-m_sun_h)
-        {
-            pdf = 1.0F / m_sun_h;
-            clr = m_sun_ratio * m_sun_clr * pdf;
-        }
-        else
-        {
-            pdf = 0.0F; // sample() doesn't samply the sky
-            clr = (1.0F - m_sun_ratio) * m_sky_clr;
-        }
+        pdf = 1.0F / m_sun_h;
+        clr = m_sun_ratio * m_sun_clr * pdf;
     }
     else
     {
-        pdf = 0.0F;
-        clr = Imath::C3f(0);
+        pdf = 0.0F; // sample() doesn't samply the sky
+        clr = (1.0F - m_sun_ratio) * m_sky_clr;
     }
 }
 
 BRDF::BRDF(const nlohmann::json &parameters)
 {
-    m_clr = Imath::C3f(0.5F);
+    m_clr = json_to_color(parameters["diffuse_color"]);
 }
 
 void BRDF::sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f &n, float sx, float sy) const
@@ -117,15 +116,15 @@ void BRDF::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir, const Im
 void BRDF::mis_sample(const SUN_SKY_LIGHT &light,
                       Imath::C3f &b_clr, Imath::V3f &b_dir,
                       Imath::C3f &l_clr, Imath::V3f &l_dir,
-                      const Imath::V3f &n, float sx, float sy) const
+                      const Imath::V3f &n,
+                      float bsx, float bsy,
+                      float lsx, float lsy) const
 {
     float b_pdf;
     float l_pdf;
 
-    // We may want a different sample for the light to avoid potential
-    // correlation artifacts
-    sample(b_clr, b_pdf, b_dir, n, sx, sy);
-    light.sample(l_clr, l_pdf, l_dir, sx, sy);
+    sample(b_clr, b_pdf, b_dir, n, bsx, bsy);
+    light.sample(l_clr, l_pdf, l_dir, lsx, lsy);
 
     Imath::C3f bl_clr;
     Imath::C3f lb_clr;

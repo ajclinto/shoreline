@@ -13,11 +13,11 @@ struct RES {
 
     int tile_count() const
     {
-        return ((xres + tres - 1) / tres) * ((yres + tres - 1) / tres) * nsamples;
+        return ((xres + tres - 1) / tres) * ((yres + tres - 1) / tres);
     }
     size_t shm_size() const
     {
-        return nthreads*tres*tres*sizeof(uint);
+        return nthreads*tres*tres*sizeof(uint32_t);
     }
 };
 

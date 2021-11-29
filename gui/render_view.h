@@ -26,6 +26,7 @@ public:
 
     void set_parameter(const std::string &name, int value);
     void set_parameter(const std::string &name, double value);
+    void set_parameter(const std::string &name, const QColor &value);
 
 public slots:
     bool start_render();
@@ -90,6 +91,7 @@ private:
     // Tile queue (from the renderer)
     RES                  m_res;
     std::queue<TILE>     m_tiles;
+    int                  m_tiles_complete = 0;
 
     QPoint m_mousepos;
     QPoint m_offset;
