@@ -14,6 +14,7 @@
 #include "ImathRandom.h"
 #include "ImathVec.h"
 #include "ImathMatrix.h"
+#include <nlohmann/json.hpp>
 
 
 // Base class for scene nodes
@@ -65,35 +66,15 @@ private:
     Imath::V3f m_v;
 };
 
-// A simple subset of the Weber-Penn tree model
 class TREE {
 public:
-    TREE(int levels_in, int shape_in, float ratio_in, float ratioPower_in, 
-         float bare_in,
-         const std::vector<int> &branchingFactors_in, 
-         const std::vector<float> &curveVar_in, const std::vector<int> &curveResolution_in,
-         const std::vector<float> &lengths_in, const std::vector<float> &lengthsVar_in,
-         const std::vector<float> &downAngles_in, const std::vector<float> &downAnglesVar_in,
-         const std::vector<float> &rotations_in, const std::vector<float> &rotationsVar_in,
-         NODE* leaf_in, unsigned long int seed = 0)
-        : levels(levels_in)
-        , shape(shape_in)
-        , ratio(ratio_in)
-        , ratioPower(ratioPower_in)
-        , bare(bare_in)
-        , branchingFactors(branchingFactors_in)
-        , curveVar(curveVar_in)
-        , curveResolution(curveResolution_in)
-        , lengths(lengths_in)
-        , lengthsVar(lengthsVar_in)
-        , downAngles(downAngles_in)
-        , downAnglesVar(downAnglesVar_in)
-        , rotations(rotations_in)
-        , rotationsVar(rotationsVar_in)
-        , leaf(leaf_in)
-        , m_rand(seed)
-        {
-        }
+    TREE(const nlohmann::json &parameters)
+        : m_parameters(parameters)
+        , m_root_seed(parameters["tree_seed"])
+    {
+    }
+
+    static void publish_ui(nlohmann::json &json_ui);
 
     // Performs procedural construction of the tree
     void build();
@@ -104,53 +85,18 @@ public:
         m_root.embree_geometry(Imath::M44f(), device, scene);
     }
 
-protected:
-    // Evaluate the tree shape ratio
-    float evalShape(float ratio) {
-        switch (shape) {
-            case 0: // Conical
-                return 0.2+0.8*ratio;
-            case 1: // Spherical
-                return 0.2+0.8*sin(M_PI*ratio);
-            case 2: // Hemispherical
-                return 0.2+0.8*sin(0.5*M_PI*ratio);
-            case 3: // Cylindrical 
-                return 1.0;
-            case 4: // Tapered Cylindrical
-                return 0.5+0.5*ratio;
-            default:
-                printf("Invalid tree shape, aborting...\n");
-                exit(1);
-        }
-    }
-
+private:
     // Build the hierarchical representation of the tree recursively
-    void construct(int level, GROUP_NODE& local, 
-                   float radius, float length, float maxLength = 0.0,
-                   float parentLength = 0.0, float offset = 0.0);
+    void construct(GROUP_NODE& local, POLY_CURVE &trunk,
+                   float &weight, float &center_of_mass,
+                   uint32_t seed, float radius, float leaf_count);
 
 private:
-    int levels;
-    int shape;
-    float ratio;
-    float ratioPower;
-    float bare;
-
-    std::vector<int> branchingFactors;
-    std::vector<float> curveVar;
-    std::vector<int> curveResolution;
-    std::vector<float> lengths;
-    std::vector<float> lengthsVar;
-    std::vector<float> downAngles;
-    std::vector<float> downAnglesVar;
-    std::vector<float> rotations;
-    std::vector<float> rotationsVar;
-
-    NODE* leaf;
+    nlohmann::json m_parameters;
 
     GROUP_NODE m_root;
 
-    Imath::Rand32 m_rand;
+    uint32_t m_root_seed;
 };
 
 #endif // TREE_H

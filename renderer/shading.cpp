@@ -37,7 +37,7 @@ SUN_SKY_LIGHT::SUN_SKY_LIGHT(const nlohmann::json &parameters)
     m_sky_clr = json_to_color(parameters["sky_color"]);
     m_sun_dir = Imath::V3f(1.0, 0.0, 0.0);
     Imath::M44f r;
-    r.rotate(Imath::V3f(0.0F, -radians(parameters["sun_elevation"]), radians(parameters["sun_azimuth"])));
+    r.rotate(Imath::V3f(0.0F, -radians(parameters["sun_elevation"]), -radians(parameters["sun_azimuth"])));
     m_sun_dir *= r;
     m_sun_dir.normalize();
     m_sun_angle = radians(32.0F / 60.0F);
@@ -71,7 +71,7 @@ void SUN_SKY_LIGHT::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir)
     }
     else
     {
-        pdf = 0.0F; // sample() doesn't samply the sky
+        pdf = 0.0F; // sample() doesn't sample the sky
         clr = (1.0F - m_sun_ratio) * m_sky_clr;
     }
 }

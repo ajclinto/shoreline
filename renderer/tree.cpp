@@ -77,124 +77,210 @@ void PLANE::embree_geometry(RTCDevice device, RTCScene scene) const
     rtcReleaseGeometry(geom);
 }
 
-void TREE::build()
+void TREE::publish_ui(nlohmann::json &json_ui)
 {
-    printf("Constructing tree... levels %d\n", levels);
-
-    // Determine the initial radius of the tree
-    float radius = lengths[0]*ratio;
-
-    construct(0, m_root, radius, lengths[0]);
+    nlohmann::json tree_ui = {
+        {
+            {"name", "tree_seed"},
+            {"type", "int"},
+            {"default", 0},
+            {"min", 0},
+            {"max", 10}
+        },
+        {
+            {"name", "trunk_radius"},
+            {"type", "float"},
+            {"default", 0.04},
+            {"min", 0.0},
+            {"max", 1.0}
+        },
+        {
+            {"name", "levels"},
+            {"type", "float"},
+            {"default", 5.0},
+            {"min", 0.0},
+            {"max", 6.0}
+        },
+        {
+            {"name", "tree_height"},
+            {"type", "float"},
+            {"default", 2.5},
+            {"min", 0.0},
+            {"max", 10.0}
+        },
+        {
+            {"name", "branch_length_exponent"},
+            {"type", "float"},
+            {"default", 0.7},
+            {"min", 0.0},
+            {"max", 1.0}
+        },
+        {
+            {"name", "da_vinci_exponent"},
+            {"type", "float"},
+            {"default", 2.0},
+            {"min", 1.8},
+            {"max", 2.3}
+        },
+        {
+            {"name", "branch_ratio"},
+            {"type", "float"},
+            {"default", 0.4},
+            {"min", 0.001},
+            {"max", 0.5}
+        },
+        {
+            {"name", "branch_ratio_variance"},
+            {"type", "float"},
+            {"default", 0.75},
+            {"min", 0.0},
+            {"max", 1.0}
+        },
+        {
+            {"name", "branch_spread_angle"},
+            {"type", "float"},
+            {"default", 40.0},
+            {"min", 0.0},
+            {"max", 90.0}
+        },
+        {
+            {"name", "branch_twist_angle"},
+            {"type", "float"},
+            {"default", 130.0},
+            {"min", 0.0},
+            {"max", 180.0}
+        },
+        {
+            {"name", "branch_angle_variance"},
+            {"type", "float"},
+            {"default", 10.0},
+            {"min", 0.0},
+            {"max", 90.0}
+        }
+    };
+    json_ui.insert(json_ui.end(), tree_ui.begin(), tree_ui.end());
 }
 
-void TREE::construct(int level, GROUP_NODE& local, 
-        float radius, float length, float maxLength, 
-        float parentLength, float offset)
+void TREE::build()
 {
+    // Determine the initial trunk radius of the tree
+    float radius = m_parameters["trunk_radius"];
+    float height = m_parameters["tree_height"];
+    float leaf_count = m_parameters["levels"];
+    leaf_count = pow(10.0, leaf_count);
 
-    // If there is a need, these could also be made parameters for the
-    // generation algorithm.
-    
-    // The extent to which a stem will taper to a point
-    const float taper = 1.0;
-    
-    // Create the geometry for the stem.  Uses the curvature variation to 
-    // introduce a curvature in the branch.  The points array stores the 
-    // position of the segments in the tree.
-    float rad = radius;
-    float factor = (radius*taper/(float)curveResolution[level]);
-    float segmentRotation = m_rand.nextf(-curveVar[level]/2.0, curveVar[level]/2.0)/
-        (float)curveResolution[level];
-    float segmentLen = length/(float)curveResolution[level];
+    POLY_CURVE *trunk = new POLY_CURVE;
+    float weight;
+    float center_of_mass;
+    construct(m_root, *trunk, weight, center_of_mass, m_root_seed, radius, leaf_count);
+    m_root.add_child(trunk);
 
-    POLY_CURVE *segments = new POLY_CURVE;
-    segments->m_pos_r.resize(curveResolution[level]+1);
-    segments->m_pos_r[0] = std::make_pair(Imath::V3f(0, 0, 0), rad);
-    for (int i = 0; i < curveResolution[level]; i++) {
-        rad -= factor;
-        Imath::M44f r;
-        r.rotate(Imath::V3f(radians(i*segmentRotation), 0, 0));
-        segments->m_pos_r[i+1] = std::make_pair(segments->m_pos_r[i].first+Imath::V3f(0, 0, segmentLen)*r, rad);
+    // Scale the whole tree to the desired size
+    float trunk_len = 0.0;
+    for (int i = 0; i < trunk->m_pos_r.size()-1; i++)
+    {
+        trunk_len += (trunk->m_pos_r[i+1].first - trunk->m_pos_r[i].first).length();
     }
-    local.add_child(segments);
 
-    // Branch if we are still under the recursion limit
-    if (level < levels-1) {
-    
-        // Determine the number of sub-branches that should be created.  More
-        // sub-branches are automatically created on branches that are nearer to
-        // the base of the parent branch.
-        int branches = 0;
-        if (level == 0) {
-            branches = branchingFactors[level+1];
-        }
-        else if (level == 1) {
-            branches = (int)(branchingFactors[level+1]*(0.2+0.8*length/
-                    (parentLength*maxLength)));
-        }
-        else {
-            branches = (int)(branchingFactors[level+1]*(1.0-0.5*offset/parentLength));
-        }
-        
-        // Construct the sub-branches at evenly spaced positions on the stem.
-        
-        float baseLength = level == 0 ? bare : 0.0;
-        float offset = baseLength;
-        float interBranchDist = (length-baseLength)/((float)branches + 1.0);
-        float rotation = m_rand.nextf(0.0, 360.0);
+    m_root.m_xform.setScale(height / trunk_len);
+}
 
-        for (int i = 0; i < branches; i++) {
-            // Randomly generate a down rotation vector
-            float down = downAngles[level+1] + m_rand.nextf(
-                    -downAnglesVar[level+1]/2.0, downAnglesVar[level+1]/2.0);
-            // Randomly generate a around rotation vector
-            rotation = rotation + rotations[level+1] + 
-                m_rand.nextf(-rotationsVar[level+1]/2.0, rotationsVar[level+1]/2.0);
-            // Generate the new offset for the branch
-            offset += interBranchDist;
+void TREE::construct(GROUP_NODE& local, POLY_CURVE &trunk,
+                     float &weight, float &center_of_mass,
+                     uint32_t seed, float radius, float leaf_count)
+{
+    Imath::Rand32 lrand(seed);
+    float length = 1.0;
+    float branch_ratio = m_parameters["branch_ratio"];
+    float branch_ratio_variance = m_parameters["branch_ratio_variance"];
+    float branch_length_exponent = m_parameters["branch_length_exponent"];
 
-            // Generate the length of the child branch.  This is done in two 
-            // different ways, depending on whether this branch is the trunk or 
-            // another major branch.
-            float childLength = 0.0;
-            float maxChildLength = lengths[level+1] +
-                m_rand.nextf(lengthsVar[level+1]/2.0, lengthsVar[level+1]/2.0);
-            if (level == 0) {
-                childLength = maxChildLength*length*evalShape((length-offset)/(length-baseLength));
-            }
-            else {
-                childLength = maxChildLength*(length-0.6*offset);
-            }
+    branch_ratio *= lrand.nextf(1.0F-branch_ratio_variance, 1.0F);
 
-            // Determine the child radius
-            float childRadius = std::min(radius*(length-offset)/length, pow(childLength/length, ratioPower)*radius);
+    length *= pow(radius, branch_length_exponent);
+    length *= branch_ratio;
 
-            // Evaluate the position of the child branch on the parent using 
-            // linear interpolation
-            int indexLow = (int)(curveResolution[level]*offset/length);
-            float interp = (curveResolution[level]*offset/length) -
-                    (int)(curveResolution[level]*offset/length);
-            Imath::V3f position = Imath::lerp(segments->m_pos_r[indexLow].first,
-                                              segments->m_pos_r[indexLow+1].first, interp);
+    trunk.m_pos_r.push_back(std::make_pair(Imath::V3f(0, 0, 0), radius));
+    if (leaf_count <= 1.0F)
+    {
+        length *= leaf_count;
+        trunk.m_pos_r.push_back(std::make_pair(Imath::V3f(0, 0, length), 0.0F));
+        weight = 0;
+        center_of_mass = 0;
+    }
+    else
+    {
+        float da_vinci_exponent = m_parameters["da_vinci_exponent"];
+        float angle_var = m_parameters["branch_angle_variance"];
+        float area = pow(radius, da_vinci_exponent);
 
+        float spread = m_parameters["branch_spread_angle"];
+        float twist = m_parameters["branch_twist_angle"];
+
+        spread += lrand.nextf(-angle_var, angle_var);
+        twist += lrand.nextf(-angle_var, angle_var);
+
+        float r[2] = {
+            pow(area*branch_ratio, 1.0F/da_vinci_exponent),
+            pow(area*(1.0F-branch_ratio), 1.0F/da_vinci_exponent)};
+        float l[2] = {leaf_count*branch_ratio, leaf_count*(1.0F-branch_ratio)};
+        float w[2];
+        float c[2];
+
+        // Treat the larger branch as a continuation of the trunk
+        int larger_idx = 1;
+        int trunk_idx = trunk.m_pos_r.size();
+
+        GROUP_NODE *children[2];
+
+        // Build the child branches then set angles in a second pass given the
+        // known downstream weight and height of center of mass
+        for (int i = 0; i < 2; i++)
+        {
             // Create transformation nodes for the new subtree
-            GROUP_NODE* child = new GROUP_NODE;
+            children[i] = new GROUP_NODE;
+
+            if (i == larger_idx)
+            {
+                construct(*children[i], trunk, w[i], c[i], lrand.nexti(), r[i], l[i]);
+            }
+            else
+            {
+                POLY_CURVE *branch = new POLY_CURVE;
+                construct(*children[i], *branch, w[i], c[i], lrand.nexti(), r[i], l[i]);
+                children[i]->add_child(branch);
+            }
+        }
+
+        weight = w[0] + w[1];
+        center_of_mass = (w[0]*c[0] + w[1]*c[1]) / weight;
+
+        for (int i = 0; i < 2; i++)
+        {
+            float angle = spread * w[1-i]*c[1-i] / (w[0]*c[0] + w[1]*c[1]);
+            Imath::V3f position(0, 0, length);
 
             Imath::M44f t;
             t.translate(position);
-            t.rotate(Imath::V3f(radians(down), 0, radians(rotation)));
-            child->set_transform(t);
-            local.add_child(child);
+            t.rotate(Imath::V3f(radians(angle), 0, radians(twist)));
+            children[i]->set_transform(t);
+            local.add_child(children[i]);
 
-            // Recursively construct the subtree or a leaf
-            if (level == levels-2) {
-                if (leaf) child->add_child(leaf);
+            if (i == larger_idx)
+            {
+                for (int j = trunk_idx; j < trunk.m_pos_r.size(); j++)
+                {
+                    trunk.m_pos_r[j].first *= t;
+                }
             }
-            else {
-                construct(level+1, *child, childRadius, 
-                        childLength, maxChildLength, length, offset);
-            }
+
+            twist += 180.0F;
         }
     }
+
+    float stem_weight = radius * radius * length;
+    center_of_mass = (center_of_mass + length) * weight + length * 0.5F * stem_weight;
+    weight += stem_weight;
+    center_of_mass /= weight;
 }
 

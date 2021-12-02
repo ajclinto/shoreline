@@ -37,22 +37,16 @@ RTCDevice initializeDevice()
     return device;
 }
 
-RTCScene initializeScene(RTCDevice device)
+RTCScene initializeScene(RTCDevice device, const nlohmann::json &json_scene)
 {
     RTCScene scene = rtcNewScene(device);
 
-    TREE tree(4, 0, 0.01, 1.2, 0.2,
-            {0, 50, 15, 15, 2, 2}, {40, 90, 60, 60, 0},
-            {8, 16, 12, 1, 1},
-            {2.0, 0.3, 1, 0.3, 0.5}, {0, 0.1, 0, 0, 0},
-            {0, 40, 30, 30, 20, 20}, {0, 10, 10, 10, 10, 10},
-            {0, 140, 140, 140, 140, 140}, {0, 20, 20, 20, 20, 20},
-            nullptr, 1);
+    TREE tree(json_scene);
 
     tree.build();
     tree.embree_geometry(device, scene);
 
-    PLANE plane(Imath::V3f(0, 0, 0), Imath::V3f(1, 0, 0), Imath::V3f(0, 1, 0));
+    PLANE plane(Imath::V3f(0, 0, 0), Imath::V3f(10, 0, 0), Imath::V3f(0, 10, 0));
     plane.embree_geometry(device, scene);
 
     rtcCommitScene(scene);
@@ -176,16 +170,23 @@ int main(int argc, char *argv[])
                 {"max", 1024}
             },
             {
+                {"name", "seed"},
+                {"type", "int"},
+                {"default", 0},
+                {"min", 0},
+                {"max", 10}
+            },
+            {
                 {"name", "sun_elevation"},
                 {"type", "float"},
                 {"default", 50.0},
-                {"min", 0.0},
+                {"min", -90.0},
                 {"max", 90.0}
             },
             {
                 {"name", "sun_azimuth"},
                 {"type", "float"},
-                {"default", 20.0},
+                {"default", 340.0},
                 {"min", 0.0},
                 {"max", 360.0}
             },
@@ -212,7 +213,8 @@ int main(int argc, char *argv[])
                 {"default", {0.75, 0.75, 0.75}}
             }
         };
-        std::cout << json_ui;
+        TREE::publish_ui(json_ui);
+        std::cout << json_ui << std::endl;
         return 0;
     }
 
@@ -266,7 +268,7 @@ int main(int argc, char *argv[])
 
     // Embree setup
     RTCDevice device = initializeDevice();
-    RTCScene scene = initializeScene(device);
+    RTCScene scene = initializeScene(device, json_scene);
 
     BRDF brdf(json_scene);
     SUN_SKY_LIGHT light(json_scene);
@@ -301,7 +303,7 @@ int main(int argc, char *argv[])
     // tres since it's useful for it to be a power of 2 and I'd rather the
     // rendered image not change when the tile size changes.
     // {
-    Imath::Rand32 pixel_rand;
+    Imath::Rand32 pixel_rand(json_scene["seed"]);
     std::vector<uint32_t> seeds(16);
     for (auto &seed : seeds)
     {
@@ -375,10 +377,10 @@ int main(int argc, char *argv[])
                 int poff = y*tile.xsize+x;
                 int ioff = (y + tile.yoff) * res.xres + x + tile.xoff;
                 const RTCRayHit &rayhit = rayhits[poff];
+                Imath::V3f dir(rayhit.ray.dir_x, rayhit.ray.dir_y, rayhit.ray.dir_z);
                 if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID)
                 {
                     Imath::V3f org(rayhit.ray.org_x, rayhit.ray.org_y, rayhit.ray.org_z);
-                    Imath::V3f dir(rayhit.ray.dir_x, rayhit.ray.dir_y, rayhit.ray.dir_z);
                     org += dir*rayhit.ray.tfar;
 
                     Imath::V3f n(rayhit.hit.Ng_x, rayhit.hit.Ng_y, rayhit.hit.Ng_z);
@@ -430,6 +432,13 @@ int main(int argc, char *argv[])
                         init_ray(occrays[shadow_test.size()], org, dir);
                         shadow_test.push_back(test);
                     }
+                }
+                else
+                {
+                    Imath::C3f clr;
+                    float pdf;
+                    light.evaluate(clr, pdf, dir);
+                    pixelcolors[ioff] += clr;
                 }
             }
         }
