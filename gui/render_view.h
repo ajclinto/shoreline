@@ -14,6 +14,7 @@
 #include "raster.h"
 #include "../h/tile.h"
 #include <nlohmann/json.hpp>
+#include <iomanip>
 
 // Render view
 class RENDER_VIEW : public QGLWidget { Q_OBJECT
@@ -24,9 +25,20 @@ public:
                          QStatusBar *status);
     virtual ~RENDER_VIEW();
 
-    void set_parameter(const std::string &name, int value);
-    void set_parameter(const std::string &name, double value);
-    void set_parameter(const std::string &name, const QColor &value);
+    void set_parameter(const std::string &name, const nlohmann::json &value);
+
+    void set_scene(const nlohmann::json &scene)
+    {
+        m_scene = scene;
+        start_render();
+    }
+    
+    void save(std::ostream &os) { os << std::setw(4) << m_scene; }
+    void open(std::istream &is)
+    {
+        is >> m_scene;
+        start_render();
+    }
 
 public slots:
     bool start_render();

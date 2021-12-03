@@ -16,10 +16,17 @@ class RENDER_VIEW;
 
 class MAIN_WINDOW : public QMainWindow { Q_OBJECT
 public:
-             MAIN_WINDOW(const char *progname);
+             MAIN_WINDOW(const char *progname, const char *filename);
     virtual ~MAIN_WINDOW();
 
     QSize                sizeHint() const;
+
+private slots:
+    void reset();
+    void save();
+    void save_as();
+    void open();
+    void open_file(const QString &fname);
 
 private:
     QActionGroup        *createActionGroup(QMenu *menu,
@@ -30,8 +37,13 @@ private:
 
 private:
     QMenu             *m_file_menu;
+    QAction           *m_new;
+    QAction           *m_open;
     QAction           *m_save;
+    QAction           *m_save_as;
     QAction           *m_quit;
+
+    QString            m_open_file;
 
     // Central widget
     RENDER_VIEW       *m_renderview;
@@ -46,6 +58,7 @@ private:
     QVBoxLayout       *m_dock_layout;
     QWidget           *m_params;
     nlohmann::json     m_json_ui;
+    nlohmann::json     m_defaults;
 };
 
 class COLOR_WIDGET : public QPushButton { Q_OBJECT

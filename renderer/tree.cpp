@@ -12,39 +12,43 @@ static float radians(float degrees)
     return degrees * static_cast<float>(M_PI / 180.0);
 }
 
-void POLY_CURVE::embree_geometry(const Imath::M44f &m, RTCDevice device, RTCScene scene) const
+static void set_shader_index(std::vector<int> &shader_index, unsigned int id, int shader_id)
 {
-    RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_ROUND_LINEAR_CURVE);
-    Imath::V4f* vertices = (Imath::V4f*) rtcSetNewGeometryBuffer(geom,
-                                                       RTC_BUFFER_TYPE_VERTEX,
-                                                       0,
-                                                       RTC_FORMAT_FLOAT4,
-                                                       sizeof(Imath::V4f),
-                                                       m_pos_r.size());
+    if (shader_index.size() <= id)
+    {
+        shader_index.resize(id+1, -1);
+    }
+    shader_index[id] = shader_id;
+}
 
-    unsigned* indices = (unsigned*) rtcSetNewGeometryBuffer(geom,
-                                                            RTC_BUFFER_TYPE_INDEX,
-                                                            0,
-                                                            RTC_FORMAT_UINT,
-                                                            sizeof(unsigned),
-                                                            m_pos_r.size());
-
+void POLY_CURVE::branch_geometry(const Imath::M44f &m, Imath::V4f *vertices, int &vidx, unsigned *indices, int &iidx) const
+{
     for (int i = 0; i < m_pos_r.size(); i++)
     {
         // Assume m has no scaling transform
         auto pos = m_pos_r[i].first * m;
         float r = m_pos_r[i].second;
-        vertices[i] = Imath::V4f(pos[0], pos[1], pos[2], r);
-        indices[i] = i;
+        if (i < m_pos_r.size()-1)
+        {
+            indices[iidx++] = vidx;
+        }
+        vertices[vidx++] = Imath::V4f(pos[0], pos[1], pos[2], r);
     }
-
-    rtcCommitGeometry(geom);
-
-    rtcAttachGeometry(scene, geom);
-    rtcReleaseGeometry(geom);
 }
 
-void PLANE::embree_geometry(RTCDevice device, RTCScene scene) const
+void POLY_CURVE::leaf_geometry(const Imath::M44f &m, int &idx, Imath::V4f *vertices, Imath::V3f *normals) const
+{
+    auto pos = m_pos_r.back().first * m;
+    auto ppos = m_pos_r[m_pos_r.size()-2].first * m;
+
+    vertices[idx] = Imath::V4f(pos[0], pos[1], pos[2], m_leaf_radius);
+    normals[idx] = pos - ppos;
+    idx++;
+}
+
+void PLANE::embree_geometry(RTCDevice device, RTCScene scene,
+                            std::vector<int> &shader_index,
+                            std::vector<BRDF> &shaders) const
 {
     RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_GRID);
 
@@ -73,7 +77,11 @@ void PLANE::embree_geometry(RTCDevice device, RTCScene scene) const
 
     rtcCommitGeometry(geom);
 
-    rtcAttachGeometry(scene, geom);
+    unsigned int id = rtcAttachGeometry(scene, geom);
+    int shader_id = shaders.size();
+    shaders.push_back(BRDF(m_parameters["diffuse_color"]));
+    set_shader_index(shader_index, id, shader_id);
+
     rtcReleaseGeometry(geom);
 }
 
@@ -93,6 +101,13 @@ void TREE::publish_ui(nlohmann::json &json_ui)
             {"default", 0.04},
             {"min", 0.0},
             {"max", 1.0}
+        },
+        {
+            {"name", "leaf_radius"},
+            {"type", "float"},
+            {"default", 0.005},
+            {"min", 0.0},
+            {"max", 0.01}
         },
         {
             {"name", "levels"},
@@ -156,6 +171,21 @@ void TREE::publish_ui(nlohmann::json &json_ui)
             {"default", 10.0},
             {"min", 0.0},
             {"max", 90.0}
+        },
+        {
+            {"name", "branch_color"},
+            {"type", "color"},
+            {"default", {0.25, 0.25, 0.25}}
+        },
+        {
+            {"name", "leaf_color"},
+            {"type", "color"},
+            {"default", {0.6, 0.75, 0.54}}
+        },
+        {
+            {"name", "enable_leaves"},
+            {"type", "bool"},
+            {"default", true}
         }
     };
     json_ui.insert(json_ui.end(), tree_ui.begin(), tree_ui.end());
@@ -205,6 +235,7 @@ void TREE::construct(GROUP_NODE& local, POLY_CURVE &trunk,
     {
         length *= leaf_count;
         trunk.m_pos_r.push_back(std::make_pair(Imath::V3f(0, 0, length), 0.0F));
+        trunk.m_leaf_radius = m_parameters["leaf_radius"];
         weight = 0;
         center_of_mass = 0;
     }
@@ -284,3 +315,73 @@ void TREE::construct(GROUP_NODE& local, POLY_CURVE &trunk,
     center_of_mass /= weight;
 }
 
+void TREE::embree_geometry(RTCDevice device, RTCScene scene,
+                           std::vector<int> &shader_index,
+                           std::vector<BRDF> &shaders) const
+{
+    int curve_count = 0;
+    int point_count = 0;
+    m_root.geometry_size(curve_count, point_count);
+
+    {
+        int branch_shader = (int)shaders.size();
+        shaders.push_back(BRDF(m_parameters["branch_color"]));
+
+        RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_ROUND_LINEAR_CURVE);
+        Imath::V4f* vertices = (Imath::V4f*) rtcSetNewGeometryBuffer(geom,
+                                                           RTC_BUFFER_TYPE_VERTEX,
+                                                           0,
+                                                           RTC_FORMAT_FLOAT4,
+                                                           sizeof(Imath::V4f),
+                                                           point_count);
+
+        unsigned* indices = (unsigned*) rtcSetNewGeometryBuffer(geom,
+                                                                RTC_BUFFER_TYPE_INDEX,
+                                                                0,
+                                                                RTC_FORMAT_UINT,
+                                                                sizeof(unsigned),
+                                                                point_count - curve_count);
+
+        int vidx = 0;
+        int iidx = 0;
+        m_root.branch_geometry(Imath::M44f(), vertices, vidx, indices, iidx);
+        assert(vidx == point_count);
+        assert(iidx == point_count - curve_count);
+
+        rtcCommitGeometry(geom);
+
+        unsigned int branch_geometry_id = rtcAttachGeometry(scene, geom);
+        set_shader_index(shader_index, branch_geometry_id, branch_shader);
+        rtcReleaseGeometry(geom);
+    }
+
+    if (m_parameters["enable_leaves"])
+    {
+        int leaf_shader = (int)shaders.size();
+        shaders.push_back(BRDF(m_parameters["leaf_color"]));
+
+        RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_ORIENTED_DISC_POINT);
+        Imath::V4f* vertices = (Imath::V4f*) rtcSetNewGeometryBuffer(geom,
+                                                           RTC_BUFFER_TYPE_VERTEX,
+                                                           0,
+                                                           RTC_FORMAT_FLOAT4,
+                                                           sizeof(Imath::V4f),
+                                                           curve_count);
+        Imath::V3f* normals = (Imath::V3f*) rtcSetNewGeometryBuffer(geom,
+                                                           RTC_BUFFER_TYPE_NORMAL,
+                                                           0,
+                                                           RTC_FORMAT_FLOAT3,
+                                                           sizeof(Imath::V3f),
+                                                           curve_count);
+
+        int idx = 0;
+        m_root.leaf_geometry(Imath::M44f(), idx, vertices, normals);
+        assert(idx == curve_count);
+
+        rtcCommitGeometry(geom);
+
+        unsigned int leaf_geometry_id = rtcAttachGeometry(scene, geom);
+        set_shader_index(shader_index, leaf_geometry_id, leaf_shader);
+        rtcReleaseGeometry(geom);
+    }
+}

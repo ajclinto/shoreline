@@ -15,13 +15,17 @@
 #include "ImathVec.h"
 #include "ImathMatrix.h"
 #include <nlohmann/json.hpp>
+#include "shading.h"
 
 
 // Base class for scene nodes
 class NODE
 {
 public:
-    virtual void embree_geometry(const Imath::M44f &m, RTCDevice device, RTCScene scene) const = 0;
+    // c == curves, p == points
+    virtual void geometry_size(int &c, int &p) const = 0;
+    virtual void branch_geometry(const Imath::M44f &m, Imath::V4f *vertices, int &vidx, unsigned *indices, int &iidx) const = 0;
+    virtual void leaf_geometry(const Imath::M44f &m, int &idx, Imath::V4f *vertices, Imath::V3f *normals) const = 0;
 };
 
 // A transform and a list of nodes
@@ -31,12 +35,29 @@ public:
     void add_child(NODE *n) { m_nodes.push_back(std::unique_ptr<NODE>(n)); }
     void set_transform(const Imath::M44f &x) { m_xform = x; }
 
-    virtual void embree_geometry(const Imath::M44f &m, RTCDevice device, RTCScene scene) const override
+    virtual void geometry_size(int &c, int &p) const override
+    {
+        for (const auto &n : m_nodes)
+        {
+            n->geometry_size(c, p);
+        }
+    }
+
+    virtual void branch_geometry(const Imath::M44f &m, Imath::V4f *vertices, int &vidx, unsigned *indices, int &iidx) const override
     {
         auto xform = m_xform * m;
         for (const auto &n : m_nodes)
         {
-            n->embree_geometry(xform, device, scene);
+            n->branch_geometry(xform, vertices, vidx, indices, iidx);
+        }
+    }
+
+    virtual void leaf_geometry(const Imath::M44f &m, int &idx, Imath::V4f *vertices, Imath::V3f *normals) const override
+    {
+        auto xform = m_xform * m;
+        for (const auto &n : m_nodes)
+        {
+            n->leaf_geometry(xform, idx, vertices, normals);
         }
     }
 
@@ -48,19 +69,32 @@ public:
 class POLY_CURVE : public NODE
 {
 public:
-    virtual void embree_geometry(const Imath::M44f &m, RTCDevice device, RTCScene scene) const override;
+    virtual void geometry_size(int &c, int &p) const
+    {
+        c++;
+        p += m_pos_r.size();
+    }
+
+    virtual void branch_geometry(const Imath::M44f &m, Imath::V4f *vertices, int &vidx, unsigned *indices, int &iidx) const override;
+    virtual void leaf_geometry(const Imath::M44f &m, int &idx, Imath::V4f *vertices, Imath::V3f *normals) const;
 
     std::vector<std::pair<Imath::V3f, float>> m_pos_r;
+    float m_leaf_radius = 0.01F;
 };
 
 class PLANE
 {
 public:
-    PLANE(const Imath::V3f &p, const Imath::V3f &u, const Imath::V3f &v) : m_p(p), m_u(u), m_v(v) {}
+    PLANE(nlohmann::json parameters, const Imath::V3f &p, const Imath::V3f &u, const Imath::V3f &v)
+        : m_parameters(parameters), m_p(p), m_u(u), m_v(v)
+    {}
 
-    virtual void embree_geometry(RTCDevice device, RTCScene scene) const;
+    void embree_geometry(RTCDevice device, RTCScene scene,
+                         std::vector<int> &shader_index,
+                         std::vector<BRDF> &shaders) const;
 
 private:
+    nlohmann::json m_parameters;
     Imath::V3f m_p;
     Imath::V3f m_u;
     Imath::V3f m_v;
@@ -80,10 +114,9 @@ public:
     void build();
 
     // Generate geometry for rendering
-    void embree_geometry(RTCDevice device, RTCScene scene)
-    {
-        m_root.embree_geometry(Imath::M44f(), device, scene);
-    }
+    void embree_geometry(RTCDevice device, RTCScene scene,
+                         std::vector<int> &shader_index,
+                         std::vector<BRDF> &shaders) const;
 
 private:
     // Build the hierarchical representation of the tree recursively

@@ -24,6 +24,14 @@ void errorFunction(void* userPtr, enum RTCError error, const char* str)
     printf("error %d: %s\n", error, str);
 }
 
+std::atomic<ssize_t> s_embree_memory(0);
+
+bool memoryFunction(void* userPtr, ssize_t bytes, bool post)
+{
+    s_embree_memory += bytes;
+    return true;
+}
+
 RTCDevice initializeDevice()
 {
     RTCDevice device = rtcNewDevice(NULL);
@@ -34,20 +42,23 @@ RTCDevice initializeDevice()
     }
 
     rtcSetDeviceErrorFunction(device, errorFunction, NULL);
+    rtcSetDeviceMemoryMonitorFunction(device, memoryFunction, nullptr);
     return device;
 }
 
-RTCScene initializeScene(RTCDevice device, const nlohmann::json &json_scene)
+RTCScene initializeScene(RTCDevice device, const nlohmann::json &json_scene,
+                         std::vector<int> &shader_index,
+                         std::vector<BRDF> &shaders)
 {
     RTCScene scene = rtcNewScene(device);
 
     TREE tree(json_scene);
 
     tree.build();
-    tree.embree_geometry(device, scene);
+    tree.embree_geometry(device, scene, shader_index, shaders);
 
-    PLANE plane(Imath::V3f(0, 0, 0), Imath::V3f(10, 0, 0), Imath::V3f(0, 10, 0));
-    plane.embree_geometry(device, scene);
+    PLANE plane(json_scene, Imath::V3f(0, 0, 0), Imath::V3f(10, 0, 0), Imath::V3f(0, 10, 0));
+    plane.embree_geometry(device, scene, shader_index, shaders);
 
     rtcCommitScene(scene);
 
@@ -267,10 +278,11 @@ int main(int argc, char *argv[])
     int tcount = res.tile_count() * res.nsamples;
 
     // Embree setup
+    std::vector<int> shader_index;
+    std::vector<BRDF> shaders;
     RTCDevice device = initializeDevice();
-    RTCScene scene = initializeScene(device, json_scene);
+    RTCScene scene = initializeScene(device, json_scene, shader_index, shaders);
 
-    BRDF brdf(json_scene);
     SUN_SKY_LIGHT light(json_scene);
 
     std::vector<Imath::C3f> pixelcolors(res.xres * res.yres);
@@ -310,7 +322,7 @@ int main(int argc, char *argv[])
         seed = pixel_rand.nexti();
     }
 
-    const uint32_t p_hash_bits = 5;
+    const uint32_t p_hash_bits = 6;
     const uint32_t p_hash_size = (1<<p_hash_bits);
     const uint32_t p_hash_mask = p_hash_size - 1;
     std::vector<uint32_t> p_hash(p_hash_size * p_hash_size);
@@ -412,6 +424,7 @@ int main(int argc, char *argv[])
                     Imath::C3f l_clr;
                     Imath::V3f l_dir;
 
+                    const BRDF &brdf = shaders[shader_index[rayhit.hit.geomID]];
                     brdf.mis_sample(light, b_clr, b_dir, l_clr, l_dir, n, bsx, bsy, lsx, lsy);
 
                     if (b_clr != Imath::V3f(0))
@@ -437,6 +450,7 @@ int main(int argc, char *argv[])
                 {
                     Imath::C3f clr;
                     float pdf;
+                    dir.normalize();
                     light.evaluate(clr, pdf, dir);
                     pixelcolors[ioff] += clr;
                 }
@@ -479,7 +493,8 @@ int main(int argc, char *argv[])
         }
 
     }, tbb::simple_partitioner());
-    printf("done %d tiles\n", tcount);
+
+    printf("Done %d tiles. Embree memory: %ldMb\n", tcount, (ssize_t)s_embree_memory/1000000);
 
     // Embree cleanup
     rtcReleaseScene(scene);

@@ -125,14 +125,15 @@ bool RENDER_VIEW::start_render()
     ::close(infd[1]);    m_intile_fd = infd[0];
     ::close(outfd[0]);   m_outtile_fd = outfd[1];
 
-    // 
-    m_scene["outpipe"] = infd[1];
-    m_scene["inpipe"] = outfd[0];
-    m_scene["shared_mem"] = m_shm_name;
+    // Add the tile interface details to the scene
+    auto scene = m_scene;
+    scene["outpipe"] = infd[1];
+    scene["inpipe"] = outfd[0];
+    scene["shared_mem"] = m_shm_name;
 
     // Write the scene to the child stdin
     std::ostringstream oss;
-    oss << m_scene;
+    oss << scene;
     std::string str = oss.str();
     if (write(m_outjson_fd, str.c_str(), str.size()) < 0)
     {
@@ -588,6 +589,10 @@ void RENDER_VIEW::keyPressEvent(QKeyEvent *event)
     {
         toggle_snapshot();
     }
+    else if (event->key() == Qt::Key_Escape)
+    {
+        stop_render();
+    }
 }
 
 void RENDER_VIEW::intile_event(int fd)
@@ -652,20 +657,9 @@ void RENDER_VIEW::timerEvent(QTimerEvent *)
     }
 }
 
-void RENDER_VIEW::set_parameter(const std::string &name, int value)
+void RENDER_VIEW::set_parameter(const std::string &name, const nlohmann::json &value)
 {
     m_scene[name] = value;
     if (!m_image.empty()) start_render();
 }
 
-void RENDER_VIEW::set_parameter(const std::string &name, double value)
-{
-    m_scene[name] = value;
-    if (!m_image.empty()) start_render();
-}
-
-void RENDER_VIEW::set_parameter(const std::string &name, const QColor &value)
-{
-    m_scene[name] = {value.redF(), value.greenF(), value.blueF()};
-    if (!m_image.empty()) start_render();
-}

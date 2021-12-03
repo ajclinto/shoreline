@@ -76,9 +76,9 @@ void SUN_SKY_LIGHT::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir)
     }
 }
 
-BRDF::BRDF(const nlohmann::json &parameters)
+BRDF::BRDF(const nlohmann::json &color)
 {
-    m_clr = json_to_color(parameters["diffuse_color"]);
+    m_clr = json_to_color(color);
 }
 
 void BRDF::sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f &n, float sx, float sy) const

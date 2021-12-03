@@ -36,7 +36,7 @@ private:
 class BRDF
 {
 public:
-    BRDF(const nlohmann::json &parameters);
+    BRDF(const nlohmann::json &color);
 
     void sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f &n, float sx, float sy) const;
     void evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir, const Imath::V3f &n) const;
