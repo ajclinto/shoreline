@@ -31,10 +31,60 @@ static Imath::C3f json_to_color(const nlohmann::json &clr)
     return Imath::C3f(pow(clr[0], 2.2), pow(clr[1], 2.2), pow(clr[2], 2.2));
 }
 
+void SUN_SKY_LIGHT::publish_ui(nlohmann::json &json_ui)
+{
+    nlohmann::json sun_sky_ui = {
+        {
+            {"name", "sun_elevation"},
+            {"type", "float"},
+            {"default", 50.0},
+            {"min", -90.0},
+            {"max", 90.0}
+        },
+        {
+            {"name", "sun_azimuth"},
+            {"type", "float"},
+            {"default", 340.0},
+            {"min", 0.0},
+            {"max", 360.0}
+        },
+        {
+            {"name", "sun_intensity"},
+            {"type", "float"},
+            {"default", 2.0},
+            {"min", 0.0},
+            {"max", 4.0}
+        },
+        {
+            {"name", "sun_color"},
+            {"type", "color"},
+            {"default", {1.0, 0.83, 0.78}}
+        },
+        {
+            {"name", "sky_1_color"},
+            {"type", "color"},
+            {"default", {0.25, 0.56, 1.0}}
+        },
+        {
+            {"name", "sky_2_color"},
+            {"type", "color"},
+            {"default", {0.47, 0.77, 1.0}}
+        },
+        {
+            {"name", "sky_3_color"},
+            {"type", "color"},
+            {"default", {0.7, 0.9, 1.0}}
+        }
+    };
+    json_ui.insert(json_ui.end(), sun_sky_ui.begin(), sun_sky_ui.end());
+}
+
 SUN_SKY_LIGHT::SUN_SKY_LIGHT(const nlohmann::json &parameters)
 {
     m_sun_clr = json_to_color(parameters["sun_color"]);
-    m_sky_clr = json_to_color(parameters["sky_color"]);
+    m_sky_1_clr = json_to_color(parameters["sky_1_color"]);
+    m_sky_2_clr = json_to_color(parameters["sky_2_color"]);
+    m_sky_3_clr = json_to_color(parameters["sky_3_color"]);
     m_sun_dir = Imath::V3f(1.0, 0.0, 0.0);
     Imath::M44f r;
     r.rotate(Imath::V3f(0.0F, -radians(parameters["sun_elevation"]), -radians(parameters["sun_azimuth"])));
@@ -42,7 +92,7 @@ SUN_SKY_LIGHT::SUN_SKY_LIGHT(const nlohmann::json &parameters)
     m_sun_dir.normalize();
     m_sun_angle = radians(32.0F / 60.0F);
     m_sun_h = 1.0-cos(m_sun_angle);
-    m_sun_ratio = parameters["sun_ratio"];
+    m_sun_intensity = parameters["sun_intensity"];
 
     // Precompute a basis to sample the sun
     get_basis(m_sun_dir, m_sun_u, m_sun_v);
@@ -54,7 +104,7 @@ void SUN_SKY_LIGHT::sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, float s
     // the BRDF
 
     pdf = 1.0F / m_sun_h;
-    clr = m_sun_ratio * m_sun_clr * pdf;
+    clr = m_sun_intensity * m_sun_clr * pdf;
 
     float h = sy * m_sun_h;
     float a = sx * 2.0F * static_cast<float>(M_PI);
@@ -67,12 +117,15 @@ void SUN_SKY_LIGHT::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir)
     if (dir.dot(m_sun_dir) > 1.0F-m_sun_h)
     {
         pdf = 1.0F / m_sun_h;
-        clr = m_sun_ratio * m_sun_clr * pdf;
+        clr = m_sun_intensity * m_sun_clr * pdf;
     }
     else
     {
         pdf = 0.0F; // sample() doesn't sample the sky
-        clr = (1.0F - m_sun_ratio) * m_sky_clr;
+        float ratio1 = (1.0F - dir[2]) * (1.0F - dir[2]);
+        float ratio2 = ratio1 * ratio1 * ratio1;
+        clr = (1.0F - ratio2) * m_sky_2_clr + ratio2 * m_sky_3_clr;
+        clr = (1.0F - ratio1) * m_sky_1_clr + ratio1 * clr;
     }
 }
 

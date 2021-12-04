@@ -18,16 +18,20 @@ class SUN_SKY_LIGHT
 public:
     SUN_SKY_LIGHT(const nlohmann::json &parameters);
 
+    static void publish_ui(nlohmann::json &json_ui);
+
     void sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, float sx, float sy) const;
     void evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir) const;
 
 private:
     Imath::C3f m_sun_clr;
-    Imath::C3f m_sky_clr;
+    Imath::C3f m_sky_1_clr;
+    Imath::C3f m_sky_2_clr;
+    Imath::C3f m_sky_3_clr;
     Imath::C3f m_sun_dir;
     float m_sun_angle;
     float m_sun_h;
-    float m_sun_ratio;
+    float m_sun_intensity;
 
     Imath::C3f m_sun_u;
     Imath::C3f m_sun_v;

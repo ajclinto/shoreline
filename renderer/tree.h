@@ -129,7 +129,8 @@ private:
 
     GROUP_NODE m_root;
 
-    uint32_t m_root_seed;
+    uint32_t m_root_seed = 0;
+    float m_leaf_radius = 1.0;
 };
 
 #endif // TREE_H

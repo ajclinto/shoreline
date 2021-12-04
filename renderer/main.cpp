@@ -188,42 +188,12 @@ int main(int argc, char *argv[])
                 {"max", 10}
             },
             {
-                {"name", "sun_elevation"},
-                {"type", "float"},
-                {"default", 50.0},
-                {"min", -90.0},
-                {"max", 90.0}
-            },
-            {
-                {"name", "sun_azimuth"},
-                {"type", "float"},
-                {"default", 340.0},
-                {"min", 0.0},
-                {"max", 360.0}
-            },
-            {
-                {"name", "sun_ratio"},
-                {"type", "float"},
-                {"default", 0.8},
-                {"min", 0.0},
-                {"max", 1.0}
-            },
-            {
-                {"name", "sun_color"},
-                {"type", "color"},
-                {"default", {1.0, 0.75, 0.75}}
-            },
-            {
-                {"name", "sky_color"},
-                {"type", "color"},
-                {"default", {0.75, 0.75, 1.0}}
-            },
-            {
                 {"name", "diffuse_color"},
                 {"type", "color"},
-                {"default", {0.75, 0.75, 0.75}}
+                {"default", {0.5, 0.5, 0.5}}
             }
         };
+        SUN_SKY_LIGHT::publish_ui(json_ui);
         TREE::publish_ui(json_ui);
         std::cout << json_ui << std::endl;
         return 0;
