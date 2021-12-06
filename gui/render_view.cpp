@@ -663,3 +663,19 @@ void RENDER_VIEW::set_parameter(const std::string &name, const nlohmann::json &v
     if (!m_image.empty()) start_render();
 }
 
+
+QImage RENDER_VIEW::get_qimage() const
+{
+    const RASTER<uint32_t> *image = nullptr;
+    if (m_snapshot_active)
+    {
+        image = &m_snapshot;
+    }
+    else
+    {
+        image = &m_image;
+    }
+
+    return QImage(reinterpret_cast<const unsigned char *>(image->data()), image->width(), image->height(), QImage::Format_RGBA8888);
+}
+

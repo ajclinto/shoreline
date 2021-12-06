@@ -6,11 +6,10 @@
 
 #include <vector>
 #include "tree.h"
+#include "common.h"
 
-static float radians(float degrees)
-{
-    return degrees * static_cast<float>(M_PI / 180.0);
-}
+// Maximum number of branches
+static const int s_max_branch = 10;
 
 static void set_shader_index(std::vector<int> &shader_index, unsigned int id, int shader_id)
 {
@@ -124,18 +123,10 @@ void TREE::publish_ui(nlohmann::json &json_ui)
             {"max", 1.0}
         },
         {
-            {"name", "branch_length_exponent"},
-            {"type", "float"},
-            {"default", 0.7},
-            {"min", 0.0},
-            {"max", 1.0}
-        },
-        {
-            {"name", "da_vinci_exponent"},
-            {"type", "float"},
-            {"default", 2.0},
-            {"min", 1.8},
-            {"max", 2.3}
+            {"name", "branching_type"},
+            {"type", "string"},
+            {"default", "alternate"},
+            {"values", {"alternate", "opposite", "whorls"}},
         },
         {
             {"name", "branch_ratio"},
@@ -150,6 +141,20 @@ void TREE::publish_ui(nlohmann::json &json_ui)
             {"default", 0.75},
             {"min", 0.0},
             {"max", 1.0}
+        },
+        {
+            {"name", "branch_length_exponent"},
+            {"type", "float"},
+            {"default", 0.7},
+            {"min", 0.0},
+            {"max", 1.0}
+        },
+        {
+            {"name", "da_vinci_exponent"},
+            {"type", "float"},
+            {"default", 2.0},
+            {"min", 1.8},
+            {"max", 2.3}
         },
         {
             {"name", "branch_spread_angle"},
@@ -235,6 +240,9 @@ void TREE::construct(GROUP_NODE& local, POLY_CURVE &trunk,
     length *= pow(radius, branch_length_exponent);
     length *= branch_ratio;
 
+    weight = 0;
+    center_of_mass = 0;
+
     trunk.m_pos_r.push_back(std::make_pair(Imath::V3f(0, 0, 0), radius));
     if (leaf_count <= 1.0F)
     {
@@ -242,8 +250,6 @@ void TREE::construct(GROUP_NODE& local, POLY_CURVE &trunk,
         trunk.m_pos_r.push_back(std::make_pair(Imath::V3f(0, 0, length), radius));
         trunk.m_leaf_radius = m_leaf_radius;
         trunk.m_leaf_radius *= lrand.nextf(0.5F, 1.25F);
-        weight = 0;
-        center_of_mass = 0;
     }
     else
     {

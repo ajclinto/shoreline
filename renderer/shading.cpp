@@ -5,11 +5,7 @@
 */
 
 #include "shading.h"
-
-static float radians(float degrees)
-{
-    return degrees * static_cast<float>(M_PI / 180.0);
-}
+#include "common.h"
 
 static void get_basis(const Imath::V3f &n, Imath::V3f &u, Imath::V3f &v)
 {
@@ -56,6 +52,13 @@ void SUN_SKY_LIGHT::publish_ui(nlohmann::json &json_ui)
             {"max", 4.0}
         },
         {
+            {"name", "sky_intensity"},
+            {"type", "float"},
+            {"default", 1.0},
+            {"min", 0.0},
+            {"max", 4.0}
+        },
+        {
             {"name", "sun_color"},
             {"type", "color"},
             {"default", {1.0, 0.83, 0.78}}
@@ -82,9 +85,13 @@ void SUN_SKY_LIGHT::publish_ui(nlohmann::json &json_ui)
 SUN_SKY_LIGHT::SUN_SKY_LIGHT(const nlohmann::json &parameters)
 {
     m_sun_clr = json_to_color(parameters["sun_color"]);
+    m_sun_clr *= (float)parameters["sun_intensity"];
     m_sky_1_clr = json_to_color(parameters["sky_1_color"]);
+    m_sky_1_clr *= (float)parameters["sky_intensity"];
     m_sky_2_clr = json_to_color(parameters["sky_2_color"]);
+    m_sky_2_clr *= (float)parameters["sky_intensity"];
     m_sky_3_clr = json_to_color(parameters["sky_3_color"]);
+    m_sky_3_clr *= (float)parameters["sky_intensity"];
     m_sun_dir = Imath::V3f(1.0, 0.0, 0.0);
     Imath::M44f r;
     r.rotate(Imath::V3f(0.0F, -radians(parameters["sun_elevation"]), -radians(parameters["sun_azimuth"])));
@@ -92,7 +99,6 @@ SUN_SKY_LIGHT::SUN_SKY_LIGHT(const nlohmann::json &parameters)
     m_sun_dir.normalize();
     m_sun_angle = radians(32.0F / 60.0F);
     m_sun_h = 1.0-cos(m_sun_angle);
-    m_sun_intensity = parameters["sun_intensity"];
 
     // Precompute a basis to sample the sun
     get_basis(m_sun_dir, m_sun_u, m_sun_v);
@@ -104,7 +110,7 @@ void SUN_SKY_LIGHT::sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, float s
     // the BRDF
 
     pdf = 1.0F / m_sun_h;
-    clr = m_sun_intensity * m_sun_clr * pdf;
+    clr = m_sun_clr * pdf;
 
     float h = sy * m_sun_h;
     float a = sx * 2.0F * static_cast<float>(M_PI);
@@ -117,7 +123,7 @@ void SUN_SKY_LIGHT::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir)
     if (dir.dot(m_sun_dir) > 1.0F-m_sun_h)
     {
         pdf = 1.0F / m_sun_h;
-        clr = m_sun_intensity * m_sun_clr * pdf;
+        clr = m_sun_clr * pdf;
     }
     else
     {

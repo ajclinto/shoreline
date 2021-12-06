@@ -16,6 +16,7 @@
 #include "ImathColorAlgo.h"
 #include "tree.h"
 #include "shading.h"
+#include "common.h"
 
 namespace po = boost::program_options;
 
@@ -181,7 +182,14 @@ int main(int argc, char *argv[])
                 {"max", 1024}
             },
             {
-                {"name", "seed"},
+                {"name", "field_of_view"},
+                {"type", "float"},
+                {"default", 60.0F},
+                {"min", 0.001},
+                {"max", 90.0}
+            },
+            {
+                {"name", "sampling_seed"},
                 {"type", "int"},
                 {"default", 0},
                 {"min", 0},
@@ -285,7 +293,7 @@ int main(int argc, char *argv[])
     // tres since it's useful for it to be a power of 2 and I'd rather the
     // rendered image not change when the tile size changes.
     // {
-    Imath::Rand32 pixel_rand(json_scene["seed"]);
+    Imath::Rand32 pixel_rand(json_scene["sampling_seed"]);
     std::vector<uint32_t> seeds(16);
     for (auto &seed : seeds)
     {
@@ -295,10 +303,11 @@ int main(int argc, char *argv[])
     const uint32_t p_hash_bits = 6;
     const uint32_t p_hash_size = (1<<p_hash_bits);
     const uint32_t p_hash_mask = p_hash_size - 1;
-    std::vector<uint32_t> p_hash(p_hash_size * p_hash_size);
+    std::vector<std::pair<uint32_t, uint32_t>> p_hash(p_hash_size * p_hash_size);
     for (auto &h : p_hash)
     {
-        h = pixel_rand.nexti();
+        h.first = pixel_rand.nexti();
+        h.second = pixel_rand.nexti();
     }
 
     auto p_hash_eval = [&](int x, int y)
@@ -306,6 +315,11 @@ int main(int argc, char *argv[])
         return p_hash[(y&p_hash_mask)*p_hash_size + (x&p_hash_mask)];
     };
     // }
+
+    float aspect = (float)res.yres / (float)res.xres;
+    float fov = json_scene["field_of_view"];
+    fov = tan(radians(fov)/2.0F);
+    fov *= 2.0F;
 
     // Note the use of grain size == 1 and simple_partitioner below to ensure
     // we get exactly tcount tasks
@@ -332,16 +346,16 @@ int main(int argc, char *argv[])
                 int px = x + tile.xoff;
                 int py = y + tile.yoff;
                 int ioff = py * res.xres + px;
-                uint32_t h_ioff = p_hash_eval(px, py);
-                uint32_t isx = h_ioff ^ vandercorput(tile.sidx);
-                uint32_t isy = h_ioff ^ sobol2(tile.sidx);
+                auto [h_ioffx,h_ioffy] = p_hash_eval(px, py);
+                uint32_t isx = h_ioffx ^ vandercorput(tile.sidx);
+                uint32_t isy = h_ioffy ^ sobol2(tile.sidx);
                 float sx = sample_to_float(isx, seeds[0]);
                 float sy = sample_to_float(isy, seeds[1]);
-                float dx = (tile.xoff + x + sx) / (float)res.xres;
-                float dz = (tile.yoff + y + sy) / (float)res.yres;
-                dx = dx - 0.5F;
-                dz = dz - 0.5F;
-                Imath::V3f org(0, -2.5, 1);
+                float dx = (px + sx) / (float)res.xres;
+                float dz = (py + sy) / (float)res.yres;
+                dx = ( dx - 0.5F) * fov;
+                dz = (-dz + 0.5F) * fov * aspect;
+                Imath::V3f org(0, -3, 1);
                 Imath::V3f dir(dx, 1, dz);
                 RTCRayHit &rayhit = rayhits[poff];
                 init_rayhit(rayhit, org, dir);
@@ -372,18 +386,18 @@ int main(int argc, char *argv[])
                         n = -n;
                     }
 
-                    const float bias = 0.001F;
+                    const float bias = 0.0001F;
                     org += bias*n;
 
                     int px = x + tile.xoff;
                     int py = y + tile.yoff;
-                    uint32_t h_ioff = p_hash_eval(px, py);
+                    auto [h_ioffx,h_ioffy] = p_hash_eval(px, py);
 
                     SHADOW_TEST test;
                     test.ioff = ioff;
 
-                    uint32_t isx = h_ioff ^ vandercorput(tile.sidx);
-                    uint32_t isy = h_ioff ^ sobol2(tile.sidx);
+                    uint32_t isx = h_ioffx ^ vandercorput(tile.sidx);
+                    uint32_t isy = h_ioffy ^ sobol2(tile.sidx);
                     float bsx = sample_to_float(isx, seeds[2]);
                     float bsy = sample_to_float(isy, seeds[3]);
                     float lsx = sample_to_float(isx, seeds[4]);

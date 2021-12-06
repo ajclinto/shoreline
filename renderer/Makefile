@@ -9,7 +9,7 @@ EMBREE_DIR = $(HOME)/embree-3.13.2.x86_64.linux
 
 # NOTE: I've manually copied the latest tbb headers into $(EMBREE_DIR)/include
 # to allow the renderer to link with and use Embree's tbb library
-CXXFLAGS += -O3 -MMD -I../h -I/usr/local/include/Imath -I$(EMBREE_DIR)/include
+CXXFLAGS += -std=c++17 -O2 -MMD -I../h -I/usr/local/include/Imath -I$(EMBREE_DIR)/include
 
 LDFLAGS += -L$(EMBREE_DIR)/lib -lImath -lembree3 -ltbb -lboost_program_options -lrt
 

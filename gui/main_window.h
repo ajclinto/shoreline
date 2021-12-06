@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 class RENDER_VIEW;
+class PARAMETER;
 
 class MAIN_WINDOW : public QMainWindow { Q_OBJECT
 public:
@@ -28,6 +29,8 @@ private slots:
     void open();
     void open_file(const QString &fname);
 
+    void save_image_as();
+
 private:
     QActionGroup        *createActionGroup(QMenu *menu,
                                            const char *names[],
@@ -35,12 +38,15 @@ private:
                                            int count,
                                            int def_action);
 
+    void update_parameters();
+
 private:
     QMenu             *m_file_menu;
     QAction           *m_new;
     QAction           *m_open;
     QAction           *m_save;
     QAction           *m_save_as;
+    QAction           *m_save_image_as;
     QAction           *m_quit;
 
     QString            m_open_file;
@@ -54,45 +60,11 @@ private:
     QAction           *m_stop_action;
 
     // Right dock
-    QDockWidget       *m_dock;
-    QVBoxLayout       *m_dock_layout;
-    QWidget           *m_params;
-    nlohmann::json     m_json_ui;
-    nlohmann::json     m_defaults;
-};
-
-class COLOR_WIDGET : public QPushButton { Q_OBJECT
-public:
-    COLOR_WIDGET(const QColor &color, QWidget* parent)
-        : QPushButton(parent)
-    {
-        setColor(color);
-        connect( this, SIGNAL(clicked()), this, SLOT(changeColor()) );
-    }
-
-signals:
-    void valueChanged(const QColor &color);
-
-public slots:
-    void changeColor()
-    {
-        QColorDialog *dialog = new QColorDialog(m_color, parentWidget());
-        connect(dialog, &QColorDialog::currentColorChanged, this, &COLOR_WIDGET::setColor);
-        connect(dialog, &QColorDialog::colorSelected, this, &COLOR_WIDGET::setColor);
-        dialog->show();
-    }
-    void setColor(const QColor& color)
-    {
-        if (color != m_color)
-        {
-            m_color = color;
-            setStyleSheet("background-color: " + m_color.name() + "; border:none;");
-            valueChanged(m_color);
-        }
-    }
-
-private:
-    QColor m_color;
+    QDockWidget                         *m_dock;
+    QVBoxLayout                         *m_dock_layout;
+    std::map<std::string, PARAMETER *>   m_parameters;
+    nlohmann::json                       m_json_ui;
+    nlohmann::json                       m_defaults;
 };
 
 #endif

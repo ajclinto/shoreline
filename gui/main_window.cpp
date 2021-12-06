@@ -6,6 +6,7 @@
 
 #include "main_window.h"
 #include "render_view.h"
+#include "parameter.h"
 #include <QtGui>
 #include <fstream>
 #include <iostream>
@@ -55,146 +56,26 @@ MAIN_WINDOW::MAIN_WINDOW(const char *progname, const char *filename)
     }
 
     auto layout = new QGridLayout;
-    m_params = new QWidget;
-    m_params->setLayout(layout);
-    int row = 0;
+    auto params = new QWidget;
+    params->setLayout(layout);
     for (const auto &json_p : m_json_ui)
     {
+        PARAMETER *p = PARAMETER::create_parameter(json_p, layout, params);
         const auto &name = json_p["name"];
-        layout->addWidget(new QLabel(QString(name.get<std::string>().c_str()), m_params), row, 0, Qt::AlignRight);
+        p->setValue(json_p["default"]);
+        m_defaults[(std::string)name] = json_p["default"];
+        m_parameters[name] = p;
 
-        if (json_p["type"] == "float")
-        {
-            double def = json_p["default"];
-            m_defaults[static_cast<std::string>(name)] = def;
-
-            auto *sb = new QDoubleSpinBox(m_params);
-            layout->addWidget(sb, row, 1);
-            sb->setKeyboardTracking(false);
-            sb->setMinimum(json_p["min"]);
-            sb->setMaximum(json_p["max"]);
-            sb->setDecimals(3);
-
-            sb->setValue(def);
-
-            connect(sb, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
-                    [&](double value) { m_renderview->set_parameter(name, value); }
-                    );
-
-            int imax = 1000;
-            auto *sl = new QSlider(Qt::Horizontal, m_params);
-            layout->addWidget(sl, row, 2);
-            sl->setMinimum(0);
-            sl->setMaximum(imax);
-            sl->setValue(static_cast<int>(imax * (def - sb->minimum()) / (sb->maximum() - sb->minimum())));
-
-            connect(sl, &QSlider::valueChanged, this,
-                    [sb, imax](int value) { sb->setValue(sb->minimum() + (value / (double)imax)*(sb->maximum() - sb->minimum())); });
-        }
-        else if (json_p["type"] == "int")
-        {
-            int def = json_p["default"];
-            m_defaults[static_cast<std::string>(name)] = def;
-
-            auto *sb = new QSpinBox(m_params);
-            layout->addWidget(sb, row, 1);
-            sb->setKeyboardTracking(false);
-            sb->setMinimum(json_p["min"]);
-            sb->setMaximum(json_p["max"]);
-            sb->setValue(def);
-
-            connect(sb, QOverload<int>::of(&QSpinBox::valueChanged), this,
-                    [&](int value) { m_renderview->set_parameter(name, value); }
-                    );
-
-            auto *sl = new QSlider(Qt::Horizontal, m_params);
-            layout->addWidget(sl, row, 2);
-
-            auto scale_it = json_p.find("scale");
-            if (scale_it != json_p.end() && *scale_it == "log")
-            {
-                int imin = json_p["min"];
-                int imax = json_p["max"];
-
-                auto from_log = [](int value, int imin, int imax)
-                {
-                    return std::min(imin*(1<<value), imax);
-                };
-                auto to_log = [](int value, int imin)
-                {
-                    int bits = 0;
-                    while (value > imin)
-                    {
-                        bits++;
-                        value >>= 1;
-                    }
-                    return bits;
-                };
-
-                sl->setMinimum(0);
-                sl->setMaximum(to_log(imax, imin));
-                sl->setValue(to_log(def, imin));
-
-                connect(sl, &QSlider::valueChanged, this,
-                        [sb,from_log,imin,imax](int value) { sb->setValue(from_log(value, imin, imax)); }
-                        );
-                connect(sb, QOverload<int>::of(&QSpinBox::valueChanged), sl,
-                        [sl,to_log,imin,imax](int value) { sl->blockSignals(true); sl->setValue(to_log(value, imin)); sl->blockSignals(false); }
-                       );
-            }
-            else
-            {
-                sl->setMinimum(json_p["min"]);
-                sl->setMaximum(json_p["max"]);
-                sl->setValue(def);
-
-                connect(sl, &QSlider::valueChanged, sb, &QSpinBox::setValue);
-                connect(sb, QOverload<int>::of(&QSpinBox::valueChanged), sl,
-                        [sl](int value) { sl->blockSignals(true); sl->setValue(value); sl->blockSignals(false); }
-                       );
-            }
-        }
-        else if (json_p["type"] == "color")
-        {
-            const auto &def = json_p["default"];
-            m_defaults[static_cast<std::string>(name)] = def;
-
-            QColor def_color;
-            def_color.setRgbF(def[0], def[1], def[2]);
-            auto *cp = new COLOR_WIDGET(def_color, m_params);
-            layout->addWidget(cp, row, 1);
-
-            connect(cp, &COLOR_WIDGET::valueChanged, this,
-                    [&](const QColor &value) { m_renderview->set_parameter(name, {value.redF(), value.greenF(), value.blueF()}); }
-                    );
-        }
-        else if (json_p["type"] == "bool")
-        {
-            bool def = json_p["default"];
-            m_defaults[static_cast<std::string>(name)] = def;
-
-            auto *cb = new QCheckBox("", m_params);
-            cb->setCheckState(def ? Qt::Checked : Qt::Unchecked);
-            layout->addWidget(cb, row, 1);
-
-            connect(cb, &QCheckBox::stateChanged, this,
-                    [&](int value) { m_renderview->set_parameter(name, value != 0); }
-                    );
-        }
-        else
-        {
-            assert("unknown type");
-        }
-
-        row++;
+        connect(p, &PARAMETER::valueChanged,
+                this, [this,name](const nlohmann::json &value) { m_renderview->set_parameter(name, value); });
     }
 
     // Compacts rows
-    layout->setRowStretch(row, 1);
+    layout->setRowStretch(layout->rowCount(), 1);
 
     auto scroll = new QScrollArea;
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setWidget(m_params);
+    scroll->setWidget(params);
     m_dock->setWidget(scroll);
 
     m_new = new QAction(tr("&New"), this);
@@ -205,6 +86,7 @@ MAIN_WINDOW::MAIN_WINDOW(const char *progname, const char *filename)
     m_save->setShortcut(QKeySequence::Save);
     m_save_as = new QAction(tr("&Save As..."), this);
     m_save_as->setShortcut(QKeySequence::SaveAs);
+    m_save_image_as = new QAction(tr("&Save Image As..."), this);
     m_quit = new QAction(tr("&Quit"), this);
     m_quit->setShortcut(QKeySequence::Quit);
 
@@ -212,6 +94,7 @@ MAIN_WINDOW::MAIN_WINDOW(const char *progname, const char *filename)
     connect(m_open, &QAction::triggered, this, &MAIN_WINDOW::open);
     connect(m_save, &QAction::triggered, this, &MAIN_WINDOW::save);
     connect(m_save_as, &QAction::triggered, this, &MAIN_WINDOW::save_as);
+    connect(m_save_image_as, &QAction::triggered, this, &MAIN_WINDOW::save_image_as);
     connect(m_quit, &QAction::triggered, qApp, &QCoreApplication::quit);
 
     m_file_menu = menuBar()->addMenu(tr("&File"));
@@ -219,6 +102,8 @@ MAIN_WINDOW::MAIN_WINDOW(const char *progname, const char *filename)
     m_file_menu->addAction(m_open);
     m_file_menu->addAction(m_save);
     m_file_menu->addAction(m_save_as);
+    m_file_menu->addSeparator();
+    m_file_menu->addAction(m_save_image_as);
     m_file_menu->addSeparator();
     m_file_menu->addAction(m_quit);
 
@@ -245,8 +130,10 @@ MAIN_WINDOW::MAIN_WINDOW(const char *progname, const char *filename)
     {
         open_file(QString(filename));
     }
-
-    m_renderview->set_scene(m_defaults);
+    else
+    {
+        m_renderview->set_scene(m_defaults);
+    }
 }
 
 MAIN_WINDOW::~MAIN_WINDOW()
@@ -281,6 +168,7 @@ MAIN_WINDOW::createActionGroup(
 void MAIN_WINDOW::reset()
 {
     m_renderview->set_scene(m_defaults);
+    update_parameters();
 }
 
 void MAIN_WINDOW::save()
@@ -341,4 +229,32 @@ void MAIN_WINDOW::open_file(const QString &fname)
 
     m_renderview->open(is);
     m_open_file = fname;
+
+    update_parameters();
+}
+
+void MAIN_WINDOW::save_image_as()
+{
+    auto fname = QFileDialog::getSaveFileName(
+        this,
+        tr("Save Image"), "",
+        tr(".png Image (*.png);;All Files (*)"));
+    if (fname.isEmpty()) return;
+
+    QImage image = m_renderview->get_qimage();
+    image.save(fname);
+}
+
+void MAIN_WINDOW::update_parameters()
+{
+    const auto &scene = m_renderview->get_scene();
+    for (auto it = scene.cbegin(); it != scene.cend(); ++it)
+    {
+        std::string name = it.key();
+        auto p_it = m_parameters.find(name);
+        if (p_it != m_parameters.end())
+        {
+            p_it->second->setValue(it.value());
+        }
+    }
 }

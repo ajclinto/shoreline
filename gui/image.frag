@@ -6,10 +6,12 @@ uniform vec2 wsize;
 uniform vec2 off;
 uniform float zoom;
 
+layout(origin_upper_left) in vec4 gl_FragCoord;
+
 void main(void)
 {
     vec2 tsize = textureSize(s_texture);
-    vec2 coord = (gl_FragCoord.xy - wsize + vec2(off.x, -off.y)) / zoom;
+    vec2 coord = (gl_FragCoord.xy - wsize + off) / zoom;
     coord += tsize/2;
     if (coord.x >= 0.0 && coord.x <= tsize.x &&
         coord.y >= 0.0 && coord.y <= tsize.y)
