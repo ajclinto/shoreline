@@ -97,9 +97,9 @@ void TREE::publish_ui(nlohmann::json &json_ui)
         {
             {"name", "levels"},
             {"type", "float"},
-            {"default", 5.0},
+            {"default", 5.5},
             {"min", 0.0},
-            {"max", 6.0}
+            {"max", 7.0}
         },
         {
             {"name", "tree_height"},
@@ -118,9 +118,9 @@ void TREE::publish_ui(nlohmann::json &json_ui)
         {
             {"name", "leaf_area_ratio"},
             {"type", "float"},
-            {"default", 0.5},
+            {"default", 1.0},
             {"min", 0.0},
-            {"max", 1.0}
+            {"max", 5.0}
         },
         {
             {"name", "branching_type"},
@@ -244,7 +244,7 @@ void TREE::construct(GROUP_NODE& local, POLY_CURVE &trunk,
     center_of_mass = 0;
 
     trunk.m_pos_r.push_back(std::make_pair(Imath::V3f(0, 0, 0), radius));
-    if (leaf_count <= 1.0F)
+    if (branch_ratio * leaf_count <= 1.0F)
     {
         length *= leaf_count;
         trunk.m_pos_r.push_back(std::make_pair(Imath::V3f(0, 0, length), radius));

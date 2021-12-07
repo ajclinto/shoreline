@@ -263,7 +263,7 @@ int main(int argc, char *argv[])
 
     SUN_SKY_LIGHT light(json_scene);
 
-    std::vector<Imath::C3f> pixelcolors(res.xres * res.yres);
+    std::vector<Imath::C3f> pixelcolors(res.xres * res.yres, Imath::C3f(0));
 
     struct SHADOW_TEST
     {
