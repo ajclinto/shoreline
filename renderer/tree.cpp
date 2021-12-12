@@ -49,30 +49,24 @@ void PLANE::embree_geometry(RTCDevice device, RTCScene scene,
                             std::vector<int> &shader_index,
                             std::vector<BRDF> &shaders) const
 {
-    RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_GRID);
-
-    RTCGrid* grid = (RTCGrid*) rtcSetNewGeometryBuffer(geom,
-                                                       RTC_BUFFER_TYPE_GRID,
-                                                       0,
-                                                       RTC_FORMAT_GRID,
-                                                       sizeof(RTCGrid),
-                                                       1);
-    grid->startVertexID = 0;
-    grid->width = 2;
-    grid->height = 2;
-    grid->stride = 2;
-
-    Imath::V3f* vertices = (Imath::V3f*) rtcSetNewGeometryBuffer(geom,
+    // A single large disc with +z normal. Renders with fewer artifacts than a
+    // large grid
+    RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_ORIENTED_DISC_POINT);
+    Imath::V4f* vertices = (Imath::V4f*) rtcSetNewGeometryBuffer(geom,
                                                        RTC_BUFFER_TYPE_VERTEX,
+                                                       0,
+                                                       RTC_FORMAT_FLOAT4,
+                                                       sizeof(Imath::V4f),
+                                                       1);
+    Imath::V3f* normals = (Imath::V3f*) rtcSetNewGeometryBuffer(geom,
+                                                       RTC_BUFFER_TYPE_NORMAL,
                                                        0,
                                                        RTC_FORMAT_FLOAT3,
                                                        sizeof(Imath::V3f),
-                                                       4);
+                                                       1);
 
-    vertices[0] = m_p - m_u - m_v;
-    vertices[1] = m_p - m_u + m_v;
-    vertices[2] = m_p + m_u - m_v;
-    vertices[3] = m_p + m_u + m_v;
+    vertices[0] = m_p;
+    normals[0] = Imath::V3f(0, 0, 1);
 
     rtcCommitGeometry(geom);
 
@@ -397,3 +391,60 @@ void TREE::embree_geometry(RTCDevice device, RTCScene scene,
         rtcReleaseGeometry(geom);
     }
 }
+
+void FOREST::publish_ui(nlohmann::json &json_ui)
+{
+    nlohmann::json tree_ui = {
+        {
+            {"name", "tree_count"},
+            {"type", "int"},
+            {"default", 1},
+            {"min", 1},
+            {"max", 1000000}
+        }
+    };
+    json_ui.insert(json_ui.end(), tree_ui.begin(), tree_ui.end());
+}
+
+void FOREST::embree_geometry(RTCDevice device, RTCScene scene,
+                           std::vector<int> &shader_index,
+                           std::vector<BRDF> &shaders) const
+{
+    RTCScene tree_scene = rtcNewScene(device);
+
+    TREE tree(m_parameters);
+    tree.build();
+    tree.embree_geometry(device, tree_scene, shader_index, shaders);
+
+    rtcCommitScene(tree_scene);
+
+    Imath::Rand48 lrand(m_parameters["tree_seed"]);
+    int count = m_parameters["tree_count"];
+    for (int i = 0; i < count; i++)
+    {
+        float x = 0;
+        float y = 0;
+        float twist = 0;
+        if (count > 1)
+        {
+            x = lrand.nextf(-1000.0F, 1000.0F);
+            y = lrand.nextf(-1000.0F, 1000.0F);
+            twist = lrand.nextf(0, 360.0F);
+        }
+
+        RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE);
+        rtcSetGeometryInstancedScene(geom, tree_scene);
+
+        Imath::M44f xform;
+        xform.translate(Imath::V3f(x, y, 0));
+        xform.rotate(Imath::V3f(0, 0, radians(twist)));
+
+        //float xform[4][3] = {{1,0,0},{0,1,0},{0,0,1},{x,y,0}};
+        rtcSetGeometryTransform(geom, 0, RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR, &xform);
+        rtcCommitGeometry(geom);
+
+        rtcAttachGeometry(scene, geom);
+        rtcReleaseGeometry(geom);
+    }
+}
+

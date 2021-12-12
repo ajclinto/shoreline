@@ -15,10 +15,20 @@ PARAMETER *PARAMETER::create_parameter(const nlohmann::json &json_p, QGridLayout
 
     if (json_p["type"] == "float")
     {
+        auto vector_it = json_p.find("vector_size");
+        if (vector_it != json_p.end())
+        {
+            return new PARAMETER_VEC<double, QDoubleSpinBox>(json_p, layout, row, parent);
+        }
         return new PARAMETER_FLOAT(json_p, layout, row, parent);
     }
     else if (json_p["type"] == "int")
     {
+        auto vector_it = json_p.find("vector_size");
+        if (vector_it != json_p.end())
+        {
+            return new PARAMETER_VEC<int, QSpinBox>(json_p, layout, row, parent);
+        }
         return new PARAMETER_INT(json_p, layout, row, parent);
     }
     else if (json_p["type"] == "color")
@@ -52,6 +62,7 @@ PARAMETER_FLOAT::PARAMETER_FLOAT(const nlohmann::json &json_p, QGridLayout *layo
 
     int imax = 1000;
     m_sl = new QSlider(Qt::Horizontal, parent);
+    m_sl->setFocusPolicy(Qt::NoFocus);
     layout->addWidget(m_sl, row, 2);
     m_sl->setMinimum(0);
     m_sl->setMaximum(imax);
@@ -75,6 +86,54 @@ void PARAMETER_FLOAT::setValue(const nlohmann::json &value)
     m_sl->setValue(static_cast<int>(m_sl->maximum() * (def - m_sb->minimum()) / (m_sb->maximum() - m_sb->minimum())));
     m_sb->blockSignals(false);
     m_sl->blockSignals(false);
+}
+
+template <typename T, typename WIDGET_T>
+PARAMETER_VEC<T, WIDGET_T>::PARAMETER_VEC(const nlohmann::json &json_p, QGridLayout *layout, int row, QWidget *parent)
+{
+    QWidget *container = new QWidget(parent);
+    QHBoxLayout *hlayout = new QHBoxLayout(container);
+    hlayout->setContentsMargins(0, 0, 0, 0);
+    hlayout->setSizeConstraint(QLayout::SetFixedSize);
+
+    int vector_size = json_p["vector_size"];
+    for (int i = 0; i < vector_size; i++)
+    {
+        auto *sb = new WIDGET_T(container);
+        hlayout->addWidget(sb);
+        sb->setKeyboardTracking(false);
+
+        auto min_it = json_p.find("min");
+        if (min_it != json_p.end()) sb->setMinimum(*min_it);
+
+        auto max_it = json_p.find("max");
+        if (max_it != json_p.end()) sb->setMaximum(*max_it);
+
+        connect(sb, QOverload<T>::of(&WIDGET_T::valueChanged), this, [this](T)
+            {
+                nlohmann::json vec;
+                for (int j = 0; j < (int)m_sb.size(); j++)
+                    vec[j] = m_sb[j]->value();
+                valueChanged(vec);
+            }
+        );
+
+        m_sb.push_back(sb);
+    }
+
+    layout->addWidget(container, row, 1, 1, -1);
+}
+
+template <typename T, typename WIDGET_T>
+void PARAMETER_VEC<T, WIDGET_T>::setValue(const nlohmann::json &value)
+{
+    for (int i = 0; i < (int)m_sb.size(); i++)
+    {
+        T def = value[i];
+        m_sb[i]->blockSignals(true);
+        m_sb[i]->setValue(def);
+        m_sb[i]->blockSignals(false);
+    }
 }
 
 static int from_log(int value, int imin, int imax)
@@ -103,6 +162,7 @@ PARAMETER_INT::PARAMETER_INT(const nlohmann::json &json_p, QGridLayout *layout, 
     connect(m_sb, QOverload<int>::of(&QSpinBox::valueChanged), this, &PARAMETER::valueChanged);
 
     m_sl = new QSlider(Qt::Horizontal, parent);
+    m_sl->setFocusPolicy(Qt::NoFocus);
     layout->addWidget(m_sl, row, 2);
 
     auto scale_it = json_p.find("scale");
@@ -155,7 +215,7 @@ void PARAMETER_INT::setValue(const nlohmann::json &value)
 
 PARAMETER_COLOR::PARAMETER_COLOR(const nlohmann::json &, QGridLayout *layout, int row, QWidget *parent)
 {
-    m_pb = new QPushButton(parent);
+    m_pb = new COLOR_PB(parent, m_color);
 
     connect( m_pb, &QPushButton::clicked, this, &PARAMETER_COLOR::changeColor);
 
@@ -169,6 +229,30 @@ void PARAMETER_COLOR::setValue(const nlohmann::json &value)
     color.setRgbF(value[0], value[1], value[2]);
     setColor(color);
     blockSignals(false);
+}
+
+void PARAMETER_COLOR::changeColor()
+{
+    QColorDialog *dialog = new QColorDialog(m_color, m_pb->parentWidget());
+    connect(dialog, &QColorDialog::currentColorChanged, this, &PARAMETER_COLOR::setColor);
+    connect(dialog, &QColorDialog::colorSelected, this, &PARAMETER_COLOR::setColor);
+
+    QColor prev_color = m_color;
+    connect(dialog, &QDialog::rejected, this, [this,prev_color](){ setColor(prev_color); });
+
+    dialog->show();
+}
+
+void PARAMETER_COLOR::setColor(const QColor& color)
+{
+    if (color != m_color)
+    {
+        m_color = color;
+        m_pb->update_style();
+
+        nlohmann::json color_json = {m_color.redF(), m_color.greenF(), m_color.blueF()};
+        valueChanged(color_json);
+    }
 }
 
 PARAMETER_BOOL::PARAMETER_BOOL(const nlohmann::json &, QGridLayout *layout, int row, QWidget *parent)

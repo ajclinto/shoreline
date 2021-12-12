@@ -38,11 +38,7 @@ public:
     {
         os << std::setw(4) << m_scene;
     }
-    void open(std::istream &is)
-    {
-        is >> m_scene;
-        start_render();
-    }
+    void open(std::istream &is, const nlohmann::json &defs);
 
     // NOTE: The returned QImage references the pointer owned by this class
     QImage get_qimage() const;

@@ -663,6 +663,21 @@ void RENDER_VIEW::set_parameter(const std::string &name, const nlohmann::json &v
     if (!m_image.empty()) start_render();
 }
 
+void RENDER_VIEW::open(std::istream &is, const nlohmann::json &defs)
+{
+    is >> m_scene;
+
+    for (const auto &p : defs.items())
+    {
+        auto it = m_scene.find(p.key());
+        if (it == m_scene.end())
+        {
+            m_scene[p.key()] = p.value();
+        }
+    }
+
+    start_render();
+}
 
 QImage RENDER_VIEW::get_qimage() const
 {

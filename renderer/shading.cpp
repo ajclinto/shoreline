@@ -128,7 +128,8 @@ void SUN_SKY_LIGHT::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir)
     else
     {
         pdf = 0.0F; // sample() doesn't sample the sky
-        float ratio1 = (1.0F - dir[2]) * (1.0F - dir[2]);
+        float ratio1 = (1.0F - std::abs(dir[2]));
+        ratio1 *= ratio1;
         float ratio2 = ratio1 * ratio1 * ratio1;
         clr = (1.0F - ratio2) * m_sky_2_clr + ratio2 * m_sky_3_clr;
         clr = (1.0F - ratio1) * m_sky_1_clr + ratio1 * clr;
@@ -195,9 +196,14 @@ void BRDF::mis_sample(const SUN_SKY_LIGHT &light,
 
     // Power heuristic - note I'm leaving out one factor of
     // x_pdf since it would cancel below
-    float wb = b_pdf / (b_pdf * b_pdf + lb_pdf * lb_pdf);
-    float wl = l_pdf / (l_pdf * l_pdf + bl_pdf * bl_pdf);
-
-    b_clr *= lb_clr * wb;
-    l_clr *= bl_clr * wl;
+    if (b_pdf > 0)
+    {
+        float wb = b_pdf / (b_pdf * b_pdf + lb_pdf * lb_pdf);
+        b_clr *= lb_clr * wb;
+    }
+    if (l_pdf > 0)
+    {
+        float wl = l_pdf / (l_pdf * l_pdf + bl_pdf * bl_pdf);
+        l_clr *= bl_clr * wl;
+    }
 }

@@ -74,6 +74,7 @@ MAIN_WINDOW::MAIN_WINDOW(const char *progname, const char *filename)
     layout->setRowStretch(layout->rowCount(), 1);
 
     auto scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll->setWidget(params);
     m_dock->setWidget(scroll);
@@ -227,7 +228,7 @@ void MAIN_WINDOW::open_file(const QString &fname)
         return;
     }
 
-    m_renderview->open(is);
+    m_renderview->open(is, m_defaults);
     m_open_file = fname;
 
     update_parameters();

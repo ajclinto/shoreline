@@ -35,6 +35,17 @@ private:
     QSlider *m_sl = nullptr;
 };
 
+template <typename T, typename WIDGET_T>
+class PARAMETER_VEC : public PARAMETER {
+public:
+    PARAMETER_VEC(const nlohmann::json &json_p, QGridLayout *layout, int row, QWidget *parent);
+
+    virtual void setValue(const nlohmann::json &value) override;
+
+private:
+    std::vector<WIDGET_T *> m_sb;
+};
+
 class PARAMETER_INT : public PARAMETER {
 public:
     PARAMETER_INT(const nlohmann::json &json_p, QGridLayout *layout, int row, QWidget *parent);
@@ -54,32 +65,40 @@ public:
     virtual void setValue(const nlohmann::json &value) override;
 
 public slots:
-    void changeColor()
-    {
-        QColorDialog *dialog = new QColorDialog(m_color, m_pb->parentWidget());
-        connect(dialog, &QColorDialog::currentColorChanged, this, &PARAMETER_COLOR::setColor);
-        connect(dialog, &QColorDialog::colorSelected, this, &PARAMETER_COLOR::setColor);
-
-        QColor prev_color = m_color;
-        connect(dialog, &QDialog::rejected, this, [this,prev_color](){ setColor(prev_color); });
-
-        dialog->show();
-    }
-    void setColor(const QColor& color)
-    {
-        if (color != m_color)
-        {
-            m_color = color;
-            m_pb->setStyleSheet("background-color: " + m_color.name() + "; border:none;");
-
-            nlohmann::json color_json = {m_color.redF(), m_color.greenF(), m_color.blueF()};
-            valueChanged(color_json);
-        }
-    }
+    void changeColor();
+    void setColor(const QColor& color);
 
 private:
+    class COLOR_PB : public QPushButton
+    {
+    public:
+        COLOR_PB(QWidget *parent, QColor &color)
+            : QPushButton(parent)
+            , m_color(color) {}
+
+        virtual void focusInEvent(QFocusEvent *) override { update_style(); }
+        virtual void focusOutEvent(QFocusEvent *) override { update_style(); }
+
+        void update_style()
+        {
+            QString style = "background-color: " + m_color.name();
+            if (hasFocus())
+            {
+                style += "; border:1px solid black;";
+            }
+            else
+            {
+                style += "; border:1px solid " + m_color.name() + ";";
+            }
+            setStyleSheet(style);
+        }
+
+    private:
+        QColor &m_color;
+    };
+
     QColor m_color;
-    QPushButton *m_pb = nullptr;
+    COLOR_PB *m_pb = nullptr;
 };
 
 class PARAMETER_BOOL : public PARAMETER {

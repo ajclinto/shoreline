@@ -18,6 +18,10 @@
 #include "shading.h"
 #include "common.h"
 
+// Embree suggested optimization
+#include <xmmintrin.h>
+#include <pmmintrin.h>
+
 namespace po = boost::program_options;
 
 void errorFunction(void* userPtr, enum RTCError error, const char* str)
@@ -35,7 +39,7 @@ bool memoryFunction(void* userPtr, ssize_t bytes, bool post)
 
 RTCDevice initializeDevice()
 {
-    RTCDevice device = rtcNewDevice(NULL);
+    RTCDevice device = rtcNewDevice("start_threads=1,set_affinity=1");
 
     if (!device)
     {
@@ -49,16 +53,25 @@ RTCDevice initializeDevice()
 
 RTCScene initializeScene(RTCDevice device, const nlohmann::json &json_scene,
                          std::vector<int> &shader_index,
+                         std::vector<int> &inst_shader_index,
                          std::vector<BRDF> &shaders)
 {
     RTCScene scene = rtcNewScene(device);
 
-    TREE tree(json_scene);
+    if (json_scene["tree_count"] > 1)
+    {
+        FOREST forest(json_scene);
+        forest.embree_geometry(device, scene, inst_shader_index, shaders);
+    }
+    else
+    {
+        TREE tree(json_scene);
 
-    tree.build();
-    tree.embree_geometry(device, scene, shader_index, shaders);
+        tree.build();
+        tree.embree_geometry(device, scene, shader_index, shaders);
+    }
 
-    PLANE plane(json_scene, Imath::V3f(0, 0, 0), Imath::V3f(10, 0, 0), Imath::V3f(0, 10, 0));
+    PLANE plane(json_scene, Imath::V4f(0, 0, 0, 10000.0F));
     plane.embree_geometry(device, scene, shader_index, shaders);
 
     rtcCommitScene(scene);
@@ -113,6 +126,11 @@ static inline void init_rayhit(RTCRayHit &rayhit, const Imath::V3f &org, const I
     rayhit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 }
 
+static Imath::V3f json_to_vector(const nlohmann::json &vec)
+{
+    return Imath::V3f(vec[0], vec[1], vec[2]);
+}
+
 int main(int argc, char *argv[])
 {
     po::options_description desc("Options");
@@ -144,18 +162,12 @@ int main(int argc, char *argv[])
     {
         nlohmann::json json_ui = {
             {
-                {"name", "xres"},
+                {"name", "res"},
                 {"type", "int"},
-                {"default", 800},
+                {"vector_size", 2},
+                {"default", {800,600}},
                 {"min", 1},
-                {"max", 3200}
-            },
-            {
-                {"name", "yres"},
-                {"type", "int"},
-                {"default", 600},
-                {"min", 1},
-                {"max", 2400}
+                {"max", 10000}
             },
             {
                 {"name", "tres"},
@@ -182,6 +194,35 @@ int main(int argc, char *argv[])
                 {"max", 1024}
             },
             {
+                {"name", "camera_pos"},
+                {"type", "float"},
+                {"vector_size", 3},
+                {"default", {0, -2.5, 1}},
+                {"min", -1000},
+                {"max",  1000}
+            },
+            {
+                {"name", "camera_pitch"},
+                {"type", "float"},
+                {"default", 0},
+                {"min", -90.0},
+                {"max", 90.0}
+            },
+            {
+                {"name", "camera_yaw"},
+                {"type", "float"},
+                {"default", 0},
+                {"min", -180.0},
+                {"max", 180.0}
+            },
+            {
+                {"name", "camera_roll"},
+                {"type", "float"},
+                {"default", 0},
+                {"min", -180.0},
+                {"max", 180.0}
+            },
+            {
                 {"name", "field_of_view"},
                 {"type", "float"},
                 {"default", 60.0F},
@@ -196,6 +237,13 @@ int main(int argc, char *argv[])
                 {"max", 10}
             },
             {
+                {"name", "gamma"},
+                {"type", "float"},
+                {"default", 2.2},
+                {"min", 1.0},
+                {"max", 2.2}
+            },
+            {
                 {"name", "diffuse_color"},
                 {"type", "color"},
                 {"default", {0.5, 0.5, 0.5}}
@@ -203,9 +251,14 @@ int main(int argc, char *argv[])
         };
         SUN_SKY_LIGHT::publish_ui(json_ui);
         TREE::publish_ui(json_ui);
+        FOREST::publish_ui(json_ui);
         std::cout << json_ui << std::endl;
         return 0;
     }
+
+    // Embree suggested optimization
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
 
     nlohmann::json json_scene;
     std::cin >> json_scene;
@@ -214,8 +267,8 @@ int main(int argc, char *argv[])
     int inpipe_fd =  json_scene["inpipe"];
 
     RES res;
-    res.xres = json_scene["xres"];
-    res.yres = json_scene["yres"];
+    res.xres = json_scene["res"][0];
+    res.yres = json_scene["res"][1];
     res.tres = json_scene["tres"];
     res.nthreads = json_scene["nthreads"];
     res.nsamples = json_scene["samples"];
@@ -257,9 +310,10 @@ int main(int argc, char *argv[])
 
     // Embree setup
     std::vector<int> shader_index;
+    std::vector<int> inst_shader_index;
     std::vector<BRDF> shaders;
     RTCDevice device = initializeDevice();
-    RTCScene scene = initializeScene(device, json_scene, shader_index, shaders);
+    RTCScene scene = initializeScene(device, json_scene, shader_index, inst_shader_index, shaders);
 
     SUN_SKY_LIGHT light(json_scene);
 
@@ -321,6 +375,15 @@ int main(int argc, char *argv[])
     fov = tan(radians(fov)/2.0F);
     fov *= 2.0F;
 
+    Imath::M44f camera_xform;
+    camera_xform *= Imath::M44f().rotate(Imath::V3f(0, -radians(json_scene["camera_roll"]), 0));
+    camera_xform *= Imath::M44f().rotate(Imath::V3f(radians(json_scene["camera_pitch"]), 0, 0));
+    camera_xform *= Imath::M44f().rotate(Imath::V3f(0, 0, -radians(json_scene["camera_yaw"])));
+    camera_xform *= Imath::M44f().translate(json_to_vector(json_scene["camera_pos"]));
+
+    float gamma = json_scene["gamma"];
+    float igamma = 1.0/gamma;
+
     // Note the use of grain size == 1 and simple_partitioner below to ensure
     // we get exactly tcount tasks
     tbb::parallel_for(tbb::blocked_range<int>(0,tcount,1),
@@ -355,10 +418,10 @@ int main(int argc, char *argv[])
                 float dz = (py + sy) / (float)res.yres;
                 dx = ( dx - 0.5F) * fov;
                 dz = (-dz + 0.5F) * fov * aspect;
-                Imath::V3f org(0, -3, 1);
-                Imath::V3f dir(dx, 1, dz);
+                Imath::V3f dir;
+                camera_xform.multDirMatrix(Imath::V3f(dx, 1, dz), dir);
                 RTCRayHit &rayhit = rayhits[poff];
-                init_rayhit(rayhit, org, dir);
+                init_rayhit(rayhit, camera_xform.translation(), dir);
             }
         }
 
@@ -380,6 +443,16 @@ int main(int argc, char *argv[])
                     org += dir*rayhit.ray.tfar;
 
                     Imath::V3f n(rayhit.hit.Ng_x, rayhit.hit.Ng_y, rayhit.hit.Ng_z);
+
+                    if (rayhit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID)
+                    {
+                        auto geo = rtcGetGeometry(scene, rayhit.hit.instID[0]);
+                        Imath::M44f xform;
+                        rtcGetGeometryTransform(geo, 0, RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR, &xform);
+                        auto tmp = n;
+                        xform.multDirMatrix(tmp, n);
+                    }
+
                     n.normalize();
                     if (n.dot(dir) > 0)
                     {
@@ -408,7 +481,10 @@ int main(int argc, char *argv[])
                     Imath::C3f l_clr;
                     Imath::V3f l_dir;
 
-                    const BRDF &brdf = shaders[shader_index[rayhit.hit.geomID]];
+                    int idx = rayhit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID ?
+                        inst_shader_index[rayhit.hit.geomID] :
+                        shader_index[rayhit.hit.geomID];
+                    const BRDF &brdf = shaders[idx];
                     brdf.mis_sample(light, b_clr, b_dir, l_clr, l_dir, n, bsx, bsy, lsx, lsy);
 
                     if (b_clr != Imath::V3f(0))
@@ -463,9 +539,9 @@ int main(int argc, char *argv[])
                 int ioff = (y + tile.yoff) * res.xres + x + tile.xoff;
                 auto clr = pixelcolors[ioff] / (tile.sidx+1);
                 // Gamma correction
-                clr[0] = std::min(powf(clr[0], 1.0F/2.2F), 1.0F);
-                clr[1] = std::min(powf(clr[1], 1.0F/2.2F), 1.0F);
-                clr[2] = std::min(powf(clr[2], 1.0F/2.2F), 1.0F);
+                clr[0] = std::min(powf(std::max(clr[0], 0.0F), igamma), 1.0F);
+                clr[1] = std::min(powf(std::max(clr[1], 0.0F), igamma), 1.0F);
+                clr[2] = std::min(powf(std::max(clr[2], 0.0F), igamma), 1.0F);
                 uint32_t val = Imath::rgb2packed(clr);
                 shared_data[res.tres*res.tres*tile.tid + poff] = val;
             }

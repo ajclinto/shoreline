@@ -85,8 +85,8 @@ public:
 class PLANE
 {
 public:
-    PLANE(nlohmann::json parameters, const Imath::V3f &p, const Imath::V3f &u, const Imath::V3f &v)
-        : m_parameters(parameters), m_p(p), m_u(u), m_v(v)
+    PLANE(nlohmann::json parameters, const Imath::V4f &p)
+        : m_parameters(parameters), m_p(p)
     {}
 
     void embree_geometry(RTCDevice device, RTCScene scene,
@@ -95,9 +95,7 @@ public:
 
 private:
     nlohmann::json m_parameters;
-    Imath::V3f m_p;
-    Imath::V3f m_u;
-    Imath::V3f m_v;
+    Imath::V4f m_p;
 };
 
 class TREE {
@@ -131,6 +129,24 @@ private:
 
     uint32_t m_root_seed = 0;
     float m_leaf_radius = 1.0;
+};
+
+class FOREST {
+public:
+    FOREST(const nlohmann::json &parameters)
+        : m_parameters(parameters)
+    {
+    }
+
+    static void publish_ui(nlohmann::json &json_ui);
+
+    // Generate geometry for rendering
+    void embree_geometry(RTCDevice device, RTCScene scene,
+                         std::vector<int> &shader_index,
+                         std::vector<BRDF> &shaders) const;
+
+private:
+    nlohmann::json m_parameters;
 };
 
 #endif // TREE_H
