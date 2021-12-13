@@ -174,11 +174,12 @@ bool RENDER_VIEW::start_render()
     connect(m_intile_notifier, &QSocketNotifier::activated, this, &RENDER_VIEW::intile_event);
 
     // Queue up the initial tiles
-    m_tiles_complete = 0;
     for (int i = 0; i < m_res.nthreads; i++)
     {
         send_tile(i);
     }
+    m_samples_complete = 0;
+    m_start_time = 0;
 
     return true;
 }
@@ -383,6 +384,13 @@ RENDER_VIEW::resizeGL(int width, int height)
     glLoadIdentity();
 }
 
+static double current_time()
+{
+    timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return ts.tv_sec + (1e-9 * (double)ts.tv_nsec);
+}
+
 void
 RENDER_VIEW::paintGL()
 {
@@ -490,8 +498,27 @@ RENDER_VIEW::paintGL()
     else
     {
         str = "Active Render ";
-        str += std::to_string(m_tiles_complete * 100 / (m_res.tile_count() * m_res.nsamples)).c_str();
+        str += std::to_string(m_samples_complete * 100 / (m_res.xres * m_res.yres * m_res.nsamples)).c_str();
         str += "%";
+
+        if (m_samples_complete > 0)
+        {
+            QString perf_str;
+            if (m_start_time == 0.0F)
+            {
+                m_start_time = current_time();
+            }
+            else
+            {
+                double t = current_time();
+                double msamples_per_second = m_samples_complete / ((t - m_start_time) * 1e6);
+                std::ostringstream oss;
+                oss << std::fixed << std::setprecision(2) << msamples_per_second;
+                perf_str += oss.str().c_str();
+                perf_str += " Msamples/s";
+            }
+            renderText(width()-metrics.width(perf_str)-tx, ty, perf_str, font);
+        }
     }
     renderText(tx, ty, str, font);
 }
@@ -610,8 +637,15 @@ void RENDER_VIEW::intile_event(int fd)
                    tile.xsize*sizeof(uint));
         }
 
-        m_tiles_complete++;
+        m_samples_complete += tile.xsize * tile.ysize;
         m_image_dirty = true;
+
+        // Push the next sample
+        tile.sidx++;
+        if (tile.sidx < m_res.nsamples)
+        {
+            m_tiles.push(tile);
+        }
 
         send_tile(tile.tid);
         bytes = read(fd, &tile, sizeof(TILE));
@@ -638,13 +672,6 @@ void RENDER_VIEW::send_tile(int tid)
         if (write(m_outtile_fd, &tile, sizeof(TILE)) < 0)
         {
             perror("write failed");
-        }
-
-        // Push the next sample
-        tile.sidx++;
-        if (tile.sidx < m_res.nsamples)
-        {
-            m_tiles.push(tile);
         }
     }
 }

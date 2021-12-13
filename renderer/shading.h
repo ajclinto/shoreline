@@ -40,6 +40,7 @@ private:
 class BRDF
 {
 public:
+    BRDF() {}
     BRDF(const nlohmann::json &color);
 
     void sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f &n, float sx, float sy) const;
@@ -51,6 +52,11 @@ public:
                     const Imath::V3f &n,
                     float bsx, float bsy,
                     float lsx, float lsy) const;
+
+    void modulate_color(const Imath::C3f &offset)
+    {
+        m_clr += offset;
+    }
 
 private:
     Imath::C3f m_clr;

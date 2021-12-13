@@ -231,6 +231,8 @@ void MAIN_WINDOW::open_file(const QString &fname)
     m_renderview->open(is, m_defaults);
     m_open_file = fname;
 
+    setWindowTitle("Shoreline Renderer - " + m_open_file);
+
     update_parameters();
 }
 

@@ -58,7 +58,7 @@ RTCScene initializeScene(RTCDevice device, const nlohmann::json &json_scene,
 {
     RTCScene scene = rtcNewScene(device);
 
-    if (json_scene["tree_count"] > 1)
+    if (json_scene["forest_levels"] > 0.0F)
     {
         FOREST forest(json_scene);
         forest.embree_geometry(device, scene, inst_shader_index, shaders);
@@ -370,6 +370,26 @@ int main(int argc, char *argv[])
     };
     // }
 
+    // {
+    float inst_color_variance = 0.2F;
+    Imath::Rand32 inst_rand;
+    const uint32_t i_hash_bits = 6;
+    const uint32_t i_hash_size = (1<<p_hash_bits);
+    const uint32_t i_hash_mask = p_hash_size - 1;
+    std::vector<Imath::C3f> i_hash(i_hash_size);
+    for (auto &h : i_hash)
+    {
+        h[0] = inst_rand.nextf(0, inst_color_variance);
+        h[1] = inst_rand.nextf(0, inst_color_variance);
+        h[2] = inst_rand.nextf(0, inst_color_variance);
+    }
+
+    auto i_hash_eval = [&](int inst)
+    {
+        return i_hash[(inst&i_hash_mask)];
+    };
+    // }
+
     float aspect = (float)res.yres / (float)res.xres;
     float fov = json_scene["field_of_view"];
     fov = tan(radians(fov)/2.0F);
@@ -459,7 +479,7 @@ int main(int argc, char *argv[])
                         n = -n;
                     }
 
-                    const float bias = 0.0001F;
+                    const float bias = 0.001F;
                     org += bias*n;
 
                     int px = x + tile.xoff;
@@ -481,10 +501,17 @@ int main(int argc, char *argv[])
                     Imath::C3f l_clr;
                     Imath::V3f l_dir;
 
-                    int idx = rayhit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID ?
-                        inst_shader_index[rayhit.hit.geomID] :
-                        shader_index[rayhit.hit.geomID];
-                    const BRDF &brdf = shaders[idx];
+                    BRDF brdf;
+                    if (rayhit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID)
+                    {
+                        brdf = shaders[inst_shader_index[rayhit.hit.geomID]];
+                        brdf.modulate_color(i_hash_eval(rayhit.hit.instID[0]));
+                    }
+                    else
+                    {
+                        brdf = shaders[shader_index[rayhit.hit.geomID]];
+                    }
+
                     brdf.mis_sample(light, b_clr, b_dir, l_clr, l_dir, n, bsx, bsy, lsx, lsy);
 
                     if (b_clr != Imath::V3f(0))

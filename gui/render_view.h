@@ -106,7 +106,8 @@ private:
     // Tile queue (from the renderer)
     RES                  m_res;
     std::queue<TILE>     m_tiles;
-    int                  m_tiles_complete = 0;
+    size_t               m_samples_complete = 0;
+    double               m_start_time = 0;
 
     QPoint m_mousepos;
     QPoint m_offset;

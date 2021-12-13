@@ -396,11 +396,25 @@ void FOREST::publish_ui(nlohmann::json &json_ui)
 {
     nlohmann::json tree_ui = {
         {
-            {"name", "tree_count"},
+            {"name", "forest_levels"},
+            {"type", "float"},
+            {"default", 0},
+            {"min", 0},
+            {"max", 8}
+        },
+        {
+            {"name", "unique_trees"},
             {"type", "int"},
             {"default", 1},
             {"min", 1},
-            {"max", 1000000}
+            {"max", 10}
+        },
+        {
+            {"name", "forest_density"},
+            {"type", "float"},
+            {"default", 1},
+            {"min", 0.1},
+            {"max", 10}
         }
     };
     json_ui.insert(json_ui.end(), tree_ui.begin(), tree_ui.end());
@@ -410,34 +424,50 @@ void FOREST::embree_geometry(RTCDevice device, RTCScene scene,
                            std::vector<int> &shader_index,
                            std::vector<BRDF> &shaders) const
 {
-    RTCScene tree_scene = rtcNewScene(device);
-
-    TREE tree(m_parameters);
-    tree.build();
-    tree.embree_geometry(device, tree_scene, shader_index, shaders);
-
-    rtcCommitScene(tree_scene);
-
     Imath::Rand48 lrand(m_parameters["tree_seed"]);
-    int count = m_parameters["tree_count"];
+    int unique_trees = m_parameters["unique_trees"];
+    std::vector<RTCScene> tree_scenes(unique_trees);
+    for (int i = 0; i < unique_trees; i++)
+    {
+        tree_scenes[i] = rtcNewScene(device);
+
+        auto inst_params = m_parameters;
+        inst_params["tree_seed"] = i;
+
+        TREE tree(inst_params);
+        tree.build();
+        tree.embree_geometry(device, tree_scenes[i], shader_index, shaders);
+
+        rtcCommitScene(tree_scenes[i]);
+    }
+
+    float forest_levels = m_parameters["forest_levels"];
+    float forest_density = m_parameters["forest_density"];
+    int count = (int)pow(10.0, forest_levels);
+    float scale = sqrt((float)count / forest_density);
     for (int i = 0; i < count; i++)
     {
         float x = 0;
         float y = 0;
         float twist = 0;
+        int tree_idx = 0;
         if (count > 1)
         {
-            x = lrand.nextf(-1000.0F, 1000.0F);
-            y = lrand.nextf(-1000.0F, 1000.0F);
+            // Generate trees in a frustum
+            y = sqrt(lrand.nextf(0, 1));
+            x = lrand.nextf(-scale, scale) * y;
+            y *= 2*scale;
             twist = lrand.nextf(0, 360.0F);
+            tree_idx = lrand.nexti() % unique_trees;
         }
 
         RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_INSTANCE);
-        rtcSetGeometryInstancedScene(geom, tree_scene);
+        rtcSetGeometryInstancedScene(geom, tree_scenes[tree_idx]);
 
         Imath::M44f xform;
         xform.translate(Imath::V3f(x, y, 0));
         xform.rotate(Imath::V3f(0, 0, radians(twist)));
+        xform.scale(Imath::V3f(lrand.nextf(0.5F, 2.0F)));
 
         //float xform[4][3] = {{1,0,0},{0,1,0},{0,0,1},{x,y,0}};
         rtcSetGeometryTransform(geom, 0, RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR, &xform);
