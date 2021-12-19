@@ -51,8 +51,11 @@ public slots:
     void toggle_snapshot();
 
 protected:
-    bool init_shm();
     void send_tile(int tid);
+    void finish_tile_rendering();
+
+    bool update_render();
+    bool handshake_render();
 
     virtual void        initializeGL();
     virtual void        resizeGL(int width, int height);
@@ -91,6 +94,9 @@ private:
     // User scene file
     nlohmann::json          m_scene;
 
+    // Pending updates to the scene
+    nlohmann::json          m_updates;
+
     // Render process connection
     // {
     pid_t                m_child = 0;
@@ -106,6 +112,7 @@ private:
     // Tile queue (from the renderer)
     RES                  m_res;
     std::queue<TILE>     m_tiles;
+    int                  m_tiles_outstanding = 0;
     size_t               m_samples_complete = 0;
     double               m_start_time = 0;
 

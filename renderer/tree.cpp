@@ -46,8 +46,7 @@ void POLY_CURVE::leaf_geometry(const Imath::M44f &m, int &idx, Imath::V4f *verti
 }
 
 void PLANE::embree_geometry(RTCDevice device, RTCScene scene,
-                            std::vector<int> &shader_index,
-                            std::vector<BRDF> &shaders) const
+                            std::vector<int> &shader_index) const
 {
     // A single large disc with +z normal. Renders with fewer artifacts than a
     // large grid
@@ -71,8 +70,7 @@ void PLANE::embree_geometry(RTCDevice device, RTCScene scene,
     rtcCommitGeometry(geom);
 
     unsigned int id = rtcAttachGeometry(scene, geom);
-    int shader_id = shaders.size();
-    shaders.push_back(BRDF(m_parameters["diffuse_color"]));
+    int shader_id = 0;
     set_shader_index(shader_index, id, shader_id);
 
     rtcReleaseGeometry(geom);
@@ -170,16 +168,6 @@ void TREE::publish_ui(nlohmann::json &json_ui)
             {"default", 10.0},
             {"min", 0.0},
             {"max", 90.0}
-        },
-        {
-            {"name", "branch_color"},
-            {"type", "color"},
-            {"default", {0.25, 0.25, 0.25}}
-        },
-        {
-            {"name", "leaf_color"},
-            {"type", "color"},
-            {"default", {0.6, 0.75, 0.54}}
         },
         {
             {"name", "enable_leaves"},
@@ -321,17 +309,22 @@ void TREE::construct(GROUP_NODE& local, POLY_CURVE &trunk,
     center_of_mass /= weight;
 }
 
+static int find_shader(const std::vector<std::string> &shader_names, const std::string &s)
+{
+    auto it = std::find(shader_names.begin(), shader_names.end(), s);
+    return it != shader_names.end() ? std::distance(shader_names.begin(), it) : 0;
+}
+
 void TREE::embree_geometry(RTCDevice device, RTCScene scene,
                            std::vector<int> &shader_index,
-                           std::vector<BRDF> &shaders) const
+                           const std::vector<std::string> &shader_names) const
 {
     int curve_count = 0;
     int point_count = 0;
     m_root.geometry_size(curve_count, point_count);
 
     {
-        int branch_shader = (int)shaders.size();
-        shaders.push_back(BRDF(m_parameters["branch_color"]));
+        int branch_shader = find_shader(shader_names, "branch");
 
         RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_ROUND_LINEAR_CURVE);
         Imath::V4f* vertices = (Imath::V4f*) rtcSetNewGeometryBuffer(geom,
@@ -363,8 +356,7 @@ void TREE::embree_geometry(RTCDevice device, RTCScene scene,
 
     if (m_parameters["enable_leaves"])
     {
-        int leaf_shader = (int)shaders.size();
-        shaders.push_back(BRDF(m_parameters["leaf_color"]));
+        int leaf_shader = find_shader(shader_names, "leaf");
 
         RTCGeometry geom = rtcNewGeometry(device, RTC_GEOMETRY_TYPE_ORIENTED_DISC_POINT);
         Imath::V4f* vertices = (Imath::V4f*) rtcSetNewGeometryBuffer(geom,
@@ -422,7 +414,7 @@ void FOREST::publish_ui(nlohmann::json &json_ui)
 
 void FOREST::embree_geometry(RTCDevice device, RTCScene scene,
                            std::vector<int> &shader_index,
-                           std::vector<BRDF> &shaders) const
+                           const std::vector<std::string> &shader_names) const
 {
     Imath::Rand48 lrand(m_parameters["tree_seed"]);
     int unique_trees = m_parameters["unique_trees"];
@@ -436,7 +428,7 @@ void FOREST::embree_geometry(RTCDevice device, RTCScene scene,
 
         TREE tree(inst_params);
         tree.build();
-        tree.embree_geometry(device, tree_scenes[i], shader_index, shaders);
+        tree.embree_geometry(device, tree_scenes[i], shader_index, shader_names);
 
         rtcCommitScene(tree_scenes[i]);
     }

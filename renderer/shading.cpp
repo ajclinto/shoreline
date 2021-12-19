@@ -136,6 +136,55 @@ void SUN_SKY_LIGHT::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir)
     }
 }
 
+void BRDF::publish_ui(nlohmann::json &json_ui)
+{
+    nlohmann::json sun_sky_ui = {
+        {
+            {"name", "diffuse_color"},
+            {"type", "color"},
+            {"default", {0.5, 0.5, 0.5}}
+        },
+        {
+            {"name", "branch_color"},
+            {"type", "color"},
+            {"default", {0.25, 0.25, 0.25}}
+        },
+        {
+            {"name", "leaf_color"},
+            {"type", "color"},
+            {"default", {0.6, 0.75, 0.54}}
+        },
+        {
+            {"name", "leaf_transmit"},
+            {"type", "float"},
+            {"default", 0},
+            {"min", 0.0},
+            {"max", 1.0},
+        }
+    };
+    json_ui.insert(json_ui.end(), sun_sky_ui.begin(), sun_sky_ui.end());
+}
+
+void BRDF::create_shaders(const nlohmann::json &parameters,
+                          std::vector<BRDF> &shaders,
+                          std::vector<std::string> &shader_names)
+{
+    // NOTE: Parameter changes should not affect shader array indices
+
+    shaders.clear();
+    shader_names.clear();
+
+    shaders.push_back(BRDF(parameters["diffuse_color"]));
+    shader_names.push_back("default");
+
+    shaders.push_back(BRDF(parameters["branch_color"]));
+    shader_names.push_back("branch");
+
+    shaders.push_back(BRDF(parameters["leaf_color"]));
+    shaders.back().set_transmit_ratio(parameters["leaf_transmit"]);
+    shader_names.push_back("leaf");
+}
+
 BRDF::BRDF(const nlohmann::json &color)
 {
     m_clr = json_to_color(color);
@@ -147,13 +196,27 @@ void BRDF::sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f
     get_basis(n, u, v);
 
     float a = sx * 2 * static_cast<float>(M_PI);
-    float r = sqrtf(sy);
-    u *= cos(a) * r;
-    v *= sin(a) * r;
-    float rz = sqrtf(1-sy);
-    dir = u + v + n*rz;
-
-    pdf = 2 * rz;
+    if (sy < m_transmit_ratio)
+    {
+        sy /= m_transmit_ratio;
+        float r = sqrtf(sy);
+        u *= cos(a) * r;
+        v *= sin(a) * r;
+        float rz = sqrtf(1-sy);
+        dir = u + v - n*rz;
+        pdf = 2 * rz * m_transmit_ratio;
+    }
+    else
+    {
+        sy -= m_transmit_ratio;
+        sy /= 1.0F - m_transmit_ratio;
+        float r = sqrtf(sy);
+        u *= cos(a) * r;
+        v *= sin(a) * r;
+        float rz = sqrtf(1-sy);
+        dir = u + v + n*rz;
+        pdf = 2 * rz * (1.0F - m_transmit_ratio);
+    }
 
     clr = m_clr * pdf;
 }
@@ -163,13 +226,13 @@ void BRDF::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir, const Im
     float rz = n.dot(dir);
     if (rz > 0)
     {
-        pdf = 2 * rz;
+        pdf = 2 * rz * (1.0F - m_transmit_ratio);
         clr = m_clr * pdf;
     }
     else
     {
-        pdf = 0;
-        clr = Imath::C3f(0);
+        pdf = -2 * rz * m_transmit_ratio;
+        clr = m_clr * pdf;
     }
 }
 

@@ -87,6 +87,15 @@ bool RENDER_VIEW::start_render()
         return false;
     }
 
+    m_shm_fd = shm_open(m_shm_name.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    if (m_shm_fd == -1)
+    {
+        perror("shm_open");
+        return false;
+    }
+    // Unset FD_CLOEXEC so that the child inherits the open shm file descriptor
+    fcntl(m_shm_fd, F_SETFD, fcntl(m_shm_fd, F_GETFD) & ~FD_CLOEXEC);
+
     m_child = fork();
     if (m_child == -1)
     {
@@ -125,11 +134,13 @@ bool RENDER_VIEW::start_render()
     ::close(infd[1]);    m_intile_fd = infd[0];
     ::close(outfd[0]);   m_outtile_fd = outfd[1];
 
+    m_updates.clear();
+
     // Add the tile interface details to the scene
     auto scene = m_scene;
     scene["outpipe"] = infd[1];
     scene["inpipe"] = outfd[0];
-    scene["shared_mem"] = m_shm_name;
+    scene["shared_mem"] = m_shm_fd;
 
     // Write the scene to the child stdin
     std::ostringstream oss;
@@ -140,16 +151,56 @@ bool RENDER_VIEW::start_render()
         return false;
     }
 
-    // Read the resolution
-    if (read(m_intile_fd, &m_res, sizeof(RES)) <= 0)
+    // Register for events on the socket
+    m_intile_notifier = new QSocketNotifier(m_intile_fd, QSocketNotifier::Read);
+    connect(m_intile_notifier, &QSocketNotifier::activated, this, &RENDER_VIEW::intile_event);
+
+    return handshake_render();
+}
+
+bool RENDER_VIEW::update_render()
+{
+    // Set to blocking just for this resolution handshake
+    int opts = fcntl(m_intile_fd, F_GETFL) & ~O_NONBLOCK;
+    fcntl(m_intile_fd, F_SETFL, opts);
+
+    if (m_shm_data)
+    {
+        munmap(m_shm_data, m_res.shm_size());
+        m_shm_data = nullptr;
+    }
+
+    std::ostringstream oss;
+    oss << m_updates;
+    std::string str = oss.str();
+    if (write(m_outjson_fd, str.c_str(), str.size()) < 0)
     {
         return false;
     }
 
-    // Initialize shared memory after reading m_res, since at this point we
-    // know the child process has created the shared buffer
-    if (!init_shm())
+    m_updates.clear();
+
+    return handshake_render();
+}
+
+bool RENDER_VIEW::handshake_render()
+{
+    // Read the new resolution
+    ssize_t bytes = read(m_intile_fd, &m_res, sizeof(RES));
+    if (bytes != sizeof(RES))
+    {
         return false;
+    }
+
+    // Map shared memory after reading m_res, since at this point we know the
+    // child process has created the shared buffer
+    m_shm_data = (uint*)mmap(NULL, m_res.shm_size(),
+            PROT_READ, MAP_SHARED, m_shm_fd, 0);
+    if (m_shm_data == MAP_FAILED)
+    {
+        perror("mmap");
+        return false;
+    }
 
     // Create the tile queue for the first sample
     TILE tile;
@@ -162,16 +213,10 @@ bool RENDER_VIEW::start_render()
             m_tiles.push(tile);
         }
     }
+    m_tiles_outstanding = 0;
 
     m_image.resize(m_res.xres, m_res.yres);
     m_image_dirty = true;
-
-    // Set the read fd to nonblocking for the notifier callback
-    fcntl(m_intile_fd, F_SETFL, O_NONBLOCK);
-
-    // Register for events on the socket
-    m_intile_notifier = new QSocketNotifier(m_intile_fd, QSocketNotifier::Read);
-    connect(m_intile_notifier, &QSocketNotifier::activated, this, &RENDER_VIEW::intile_event);
 
     // Queue up the initial tiles
     for (int i = 0; i < m_res.nthreads; i++)
@@ -180,6 +225,9 @@ bool RENDER_VIEW::start_render()
     }
     m_samples_complete = 0;
     m_start_time = 0;
+
+    // Set the read fd to nonblocking for the notifier callback
+    fcntl(m_intile_fd, F_SETFL, O_NONBLOCK);
 
     return true;
 }
@@ -203,6 +251,7 @@ void RENDER_VIEW::stop_render()
         ::close(m_outtile_fd); m_outtile_fd = -1;
 
         m_tiles = std::queue<TILE>();
+        m_tiles_outstanding = 0;
     }
 }
 
@@ -227,28 +276,6 @@ void RENDER_VIEW::toggle_snapshot()
         }
         update();
     }
-}
-
-bool
-RENDER_VIEW::init_shm()
-{
-    // Set up shared memory before fork
-    m_shm_fd = shm_open(m_shm_name.c_str(), O_RDWR, S_IRUSR | S_IWUSR);
-    if (m_shm_fd == -1)
-    {
-        perror("shm_open");
-        return false;
-    }
-
-    m_shm_data = (uint*)mmap(NULL, m_res.shm_size(),
-            PROT_READ | PROT_WRITE, MAP_SHARED, m_shm_fd, 0);
-    if (m_shm_data == MAP_FAILED)
-    {
-        perror("mmap");
-        return false;
-    }
-
-    return true;
 }
 
 // Load a file into a buffer.  The buffer is owned by the caller, and
@@ -497,11 +524,12 @@ RENDER_VIEW::paintGL()
     }
     else
     {
+        size_t total_samples = m_res.xres * m_res.yres * (size_t)m_res.nsamples;
         str = "Active Render ";
-        str += std::to_string(m_samples_complete * 100 / (m_res.xres * m_res.yres * m_res.nsamples)).c_str();
+        str += std::to_string(m_samples_complete * 100 / total_samples).c_str();
         str += "%";
 
-        if (m_samples_complete > 0)
+        if (m_samples_complete > 0 && m_samples_complete < total_samples)
         {
             QString perf_str;
             if (m_start_time == 0.0F)
@@ -629,6 +657,8 @@ void RENDER_VIEW::intile_event(int fd)
     ssize_t bytes = read(fd, &tile, sizeof(TILE));
     while (bytes > 0)
     {
+        assert(bytes == sizeof(TILE));
+
         // Copy scanlines into the image
         for (int y = 0; y < tile.ysize; y++)
         {
@@ -639,17 +669,34 @@ void RENDER_VIEW::intile_event(int fd)
 
         m_samples_complete += tile.xsize * tile.ysize;
         m_image_dirty = true;
+        m_tiles_outstanding--;
 
-        // Push the next sample
-        tile.sidx++;
-        if (tile.sidx < m_res.nsamples)
+        if (m_updates.empty())
         {
-            m_tiles.push(tile);
-        }
+            // Push the next sample
+            tile.sidx++;
+            if (tile.sidx < m_res.nsamples)
+            {
+                m_tiles.push(tile);
+            }
 
-        send_tile(tile.tid);
+            send_tile(tile.tid);
+            if (!m_tiles_outstanding)
+            {
+                finish_tile_rendering();
+            }
+        }
+        else
+        {
+            if (!m_tiles_outstanding)
+            {
+                update_render();
+                return;
+            }
+        }
         bytes = read(fd, &tile, sizeof(TILE));
     }
+
     if (bytes == 0)
     {
         // End of file (the child process exited)
@@ -673,11 +720,38 @@ void RENDER_VIEW::send_tile(int tid)
         {
             perror("write failed");
         }
+
+        m_tiles_outstanding++;
+    }
+}
+
+void RENDER_VIEW::finish_tile_rendering()
+{
+    // Send empty tiles to exit any outstanding rendering threads
+    TILE tile;
+    for (int i = 0; i < m_res.nthreads; i++)
+    {
+        if (write(m_outtile_fd, &tile, sizeof(TILE)) < 0)
+        {
+            perror("write failed");
+        }
     }
 }
 
 void RENDER_VIEW::timerEvent(QTimerEvent *)
 {
+    if (!m_updates.empty() && !m_tiles_outstanding)
+    {
+        if (m_child > 0)
+        {
+            update_render();
+        }
+        else
+        {
+            start_render();
+        }
+    }
+
     if (m_image_dirty)
     {
         update();
@@ -687,7 +761,12 @@ void RENDER_VIEW::timerEvent(QTimerEvent *)
 void RENDER_VIEW::set_parameter(const std::string &name, const nlohmann::json &value)
 {
     m_scene[name] = value;
-    if (!m_image.empty()) start_render();
+    if (m_updates.empty() && m_tiles_outstanding)
+    {
+        m_tiles = std::queue<TILE>();
+        finish_tile_rendering();
+    }
+    m_updates[name] = value;
 }
 
 void RENDER_VIEW::open(std::istream &is, const nlohmann::json &defs)

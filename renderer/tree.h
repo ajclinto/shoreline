@@ -90,8 +90,7 @@ public:
     {}
 
     void embree_geometry(RTCDevice device, RTCScene scene,
-                         std::vector<int> &shader_index,
-                         std::vector<BRDF> &shaders) const;
+                         std::vector<int> &shader_index) const;
 
 private:
     nlohmann::json m_parameters;
@@ -114,7 +113,7 @@ public:
     // Generate geometry for rendering
     void embree_geometry(RTCDevice device, RTCScene scene,
                          std::vector<int> &shader_index,
-                         std::vector<BRDF> &shaders) const;
+                         const std::vector<std::string> &shader_names) const;
 
 private:
     // Build the hierarchical representation of the tree recursively
@@ -143,7 +142,7 @@ public:
     // Generate geometry for rendering
     void embree_geometry(RTCDevice device, RTCScene scene,
                          std::vector<int> &shader_index,
-                         std::vector<BRDF> &shaders) const;
+                         const std::vector<std::string> &shader_names) const;
 
 private:
     nlohmann::json m_parameters;

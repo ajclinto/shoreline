@@ -1,6 +1,7 @@
 srcs = \
 		  tree.cpp \
 		  shading.cpp \
+		  scene.cpp \
 		  main.cpp
 
 objects = $(srcs:.cpp=.o)
