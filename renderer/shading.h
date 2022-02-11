@@ -49,6 +49,20 @@ public:
                                std::vector<BRDF> &shaders,
                                std::vector<std::string> &shader_names);
 
+    static int find_shader(const std::vector<std::string> &shader_names, const std::string &s)
+    {
+        auto it = std::find(shader_names.begin(), shader_names.end(), s);
+        return it != shader_names.end() ? std::distance(shader_names.begin(), it) : 0;
+    }
+    static void set_shader_index(std::vector<int> &shader_index, unsigned int id, int shader_id)
+    {
+        if (shader_index.size() <= id)
+        {
+            shader_index.resize(id+1, -1);
+        }
+        shader_index[id] = shader_id;
+    }
+
     void set_transmit_ratio(float ratio) { m_transmit_ratio = ratio; }
 
     void sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f &n, float sx, float sy) const;

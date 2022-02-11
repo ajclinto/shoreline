@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <nlohmann/json.hpp>
 #include "scene.h"
+#include "terrain.h"
 #include "tree.h"
 #include "shading.h"
 #include "common.h"
@@ -113,7 +114,7 @@ int main(int argc, char *argv[])
             {
                 {"name", "field_of_view"},
                 {"type", "float"},
-                {"default", 60.0F},
+                {"default", 60.0},
                 {"min", 0.001},
                 {"max", 90.0}
             },
@@ -130,10 +131,17 @@ int main(int argc, char *argv[])
                 {"default", 2.2},
                 {"min", 1.0},
                 {"max", 2.2}
+            },
+            {
+                {"name", "shading"},
+                {"type", "string"},
+                {"default", "physical"},
+                {"values", {"physical", "geomID", "primID"}}
             }
         };
         SUN_SKY_LIGHT::publish_ui(json_ui);
         BRDF::publish_ui(json_ui);
+        TERRAIN::publish_ui(json_ui);
         TREE::publish_ui(json_ui);
         FOREST::publish_ui(json_ui);
         std::cout << json_ui << std::endl;

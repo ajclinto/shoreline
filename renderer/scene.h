@@ -31,11 +31,18 @@ private:
 
     void fill_sample_caches();
 
+    enum SHADING_MODE {
+        PHYSICAL,
+        GEOM_ID,
+        PRIM_ID
+    };
+
     void render_tile(const TILE &tile,
                      const RES &res,
                      const SUN_SKY_LIGHT &light,
                      const Imath::M44f &camera_xform,
-                     float igamma);
+                     float igamma,
+                     SHADING_MODE shading_mode);
 
 private:
     nlohmann::json json_scene;

@@ -82,21 +82,6 @@ public:
     float m_leaf_radius = 0.01F;
 };
 
-class PLANE
-{
-public:
-    PLANE(nlohmann::json parameters, const Imath::V4f &p)
-        : m_parameters(parameters), m_p(p)
-    {}
-
-    void embree_geometry(RTCDevice device, RTCScene scene,
-                         std::vector<int> &shader_index) const;
-
-private:
-    nlohmann::json m_parameters;
-    Imath::V4f m_p;
-};
-
 class TREE {
 public:
     TREE(const nlohmann::json &parameters)

@@ -160,7 +160,12 @@ void BRDF::publish_ui(nlohmann::json &json_ui)
             {"default", 0},
             {"min", 0.0},
             {"max", 1.0},
-        }
+        },
+        {
+            {"name", "water_color"},
+            {"type", "color"},
+            {"default", {0.5, 0.5, 1.0}}
+        },
     };
     json_ui.insert(json_ui.end(), sun_sky_ui.begin(), sun_sky_ui.end());
 }
@@ -183,6 +188,9 @@ void BRDF::create_shaders(const nlohmann::json &parameters,
     shaders.push_back(BRDF(parameters["leaf_color"]));
     shaders.back().set_transmit_ratio(parameters["leaf_transmit"]);
     shader_names.push_back("leaf");
+
+    shaders.push_back(BRDF(parameters["water_color"]));
+    shader_names.push_back("water");
 }
 
 BRDF::BRDF(const nlohmann::json &color)

@@ -252,6 +252,7 @@ void RENDER_VIEW::stop_render()
 
         m_tiles = std::queue<TILE>();
         m_tiles_outstanding = 0;
+        m_start_time = 0;
     }
 }
 

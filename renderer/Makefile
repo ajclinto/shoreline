@@ -1,5 +1,6 @@
 srcs = \
 		  tree.cpp \
+		  terrain.cpp \
 		  shading.cpp \
 		  scene.cpp \
 		  main.cpp

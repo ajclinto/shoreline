@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include "tree.h"
+#include "terrain.h"
 #include "common.h"
 
 
@@ -69,6 +70,7 @@ void SCENE::update(std::istream &is)
 
     // Crudely identify some parameters which require a scene rebuild
     nlohmann::json geometry_affecting_parameters = nlohmann::json::array();
+    TERRAIN::publish_ui(geometry_affecting_parameters);
     TREE::publish_ui(geometry_affecting_parameters);
     FOREST::publish_ui(geometry_affecting_parameters);
 
@@ -102,8 +104,8 @@ void SCENE::create_geometry()
         tree.embree_geometry(device, scene, shader_index, shader_names);
     }
 
-    PLANE plane(json_scene, Imath::V4f(0, 0, 0, 10000.0F));
-    plane.embree_geometry(device, scene, shader_index);
+    TERRAIN terrain(json_scene);
+    terrain.embree_geometry(device, scene, shader_index, shader_names);
 
     rtcCommitScene(scene);
 
@@ -148,7 +150,6 @@ void SCENE::fill_sample_caches()
     // }
 
     // {
-    float inst_color_variance = 0.2F;
     Imath::Rand32 inst_rand;
     const uint32_t i_hash_bits = 6;
     const uint32_t i_hash_size = (1<<p_hash_bits);
@@ -156,9 +157,9 @@ void SCENE::fill_sample_caches()
     i_hash.resize(i_hash_size);
     for (auto &h : i_hash)
     {
-        h[0] = inst_rand.nextf(0, inst_color_variance);
-        h[1] = inst_rand.nextf(0, inst_color_variance);
-        h[2] = inst_rand.nextf(0, inst_color_variance);
+        h[0] = inst_rand.nextf(0, 1);
+        h[1] = inst_rand.nextf(0, 1);
+        h[2] = inst_rand.nextf(0, 1);
     }
     // }
 }
@@ -250,6 +251,18 @@ int SCENE::render()
     int tcount = res.tile_count() * res.nsamples;
     std::atomic<int> tcomplete(0);
 
+    SHADING_MODE shading_mode = PHYSICAL;
+    if (json_scene["shading"] == "geomID")
+    {
+        shading_mode = GEOM_ID;
+        igamma = 1.0;
+    }
+    else if (json_scene["shading"] == "primID")
+    {
+        shading_mode = PRIM_ID;
+        igamma = 1.0;
+    }
+
     // Note the use of grain size == 1 and simple_partitioner below to ensure
     // we get exactly nthreads tasks
     tbb::parallel_for(tbb::blocked_range<int>(0,res.nthreads,1),
@@ -265,7 +278,7 @@ int SCENE::render()
 
             if (tile.xsize == 0) break;
 
-            render_tile(tile, res, light, camera_xform, igamma);
+            render_tile(tile, res, light, camera_xform, igamma, shading_mode);
 
             if (write(outpipe_fd, &tile, sizeof(TILE)) < 0)
             {
@@ -328,7 +341,7 @@ static inline void init_rayhit(RTCRayHit &rayhit, const Imath::V3f &org, const I
     rayhit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 }
 
-void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &light, const Imath::M44f &camera_xform, float igamma)
+void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &light, const Imath::M44f &camera_xform, float igamma, SHADING_MODE shading_mode)
 {
     auto &context = thread_data[tile.tid].context;
     auto &rayhits = thread_data[tile.tid].rayhits;
@@ -372,7 +385,23 @@ void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &l
             int ioff = (y + tile.yoff) * res.xres + x + tile.xoff;
             const RTCRayHit &rayhit = rayhits[poff];
             Imath::V3f dir(rayhit.ray.dir_x, rayhit.ray.dir_y, rayhit.ray.dir_z);
-            if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID)
+            if (shading_mode != PHYSICAL)
+            {
+                if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID)
+                {
+                    if (shading_mode == GEOM_ID)
+                    {
+                        auto clr = i_hash_eval(rayhit.hit.geomID);
+                        pixelcolors[ioff] += clr;
+                    }
+                    else if (shading_mode == PRIM_ID)
+                    {
+                        auto clr = i_hash_eval(rayhit.hit.primID);
+                        pixelcolors[ioff] += clr;
+                    }
+                }
+            }
+            else if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID)
             {
                 Imath::V3f org(rayhit.ray.org_x, rayhit.ray.org_y, rayhit.ray.org_z);
                 org += dir*rayhit.ray.tfar;
@@ -418,8 +447,9 @@ void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &l
                 BRDF brdf;
                 if (rayhit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID)
                 {
+                    float inst_color_variance = 0.2F;
                     brdf = shaders[inst_shader_index[rayhit.hit.geomID]];
-                    brdf.modulate_color(i_hash_eval(rayhit.hit.instID[0]));
+                    brdf.modulate_color(i_hash_eval(rayhit.hit.instID[0]) * inst_color_variance);
                 }
                 else
                 {
