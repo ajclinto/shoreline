@@ -65,13 +65,23 @@ public:
 
     void set_transmit_ratio(float ratio) { m_transmit_ratio = ratio; }
 
-    void sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f &n, float sx, float sy) const;
-    void evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir, const Imath::V3f &n) const;
+    // Controls whether reflection rays are shaded
+    void set_reflective() { m_reflect = true; }
+    bool is_reflective() const { return m_reflect; }
+
+    // Controls whether smooth normals are interpolated (The normal vertex
+    // buffer in slot 0 must be available on the geometry)
+    void set_smooth_N() { m_smooth_N = true; }
+    bool is_smooth_N() const { return m_smooth_N; }
+
+    void sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f &n, const Imath::V3f &d, float sx, float sy) const;
+    void evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir, const Imath::V3f &n, const Imath::V3f &d) const;
 
     void mis_sample(const SUN_SKY_LIGHT &light,
                     Imath::C3f &b_clr, Imath::V3f &b_dir,
                     Imath::C3f &l_clr, Imath::V3f &l_dir,
                     const Imath::V3f &n,
+                    const Imath::V3f &d,
                     float bsx, float bsy,
                     float lsx, float lsy) const;
 
@@ -83,6 +93,8 @@ public:
 private:
     Imath::C3f m_clr;
     float m_transmit_ratio = 0;
+    bool m_reflect = false;
+    bool m_smooth_N = false;
 };
 
 #endif // SHADING_H

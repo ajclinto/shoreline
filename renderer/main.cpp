@@ -137,6 +137,13 @@ int main(int argc, char *argv[])
                 {"type", "string"},
                 {"default", "physical"},
                 {"values", {"physical", "geomID", "primID"}}
+            },
+            {
+                {"name", "reflect_limit"},
+                {"type", "int"},
+                {"default", 2},
+                {"min", 1},
+                {"max", 10}
             }
         };
         SUN_SKY_LIGHT::publish_ui(json_ui);

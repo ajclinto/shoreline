@@ -42,7 +42,8 @@ private:
                      const SUN_SKY_LIGHT &light,
                      const Imath::M44f &camera_xform,
                      float igamma,
-                     SHADING_MODE shading_mode);
+                     SHADING_MODE shading_mode,
+                     int reflect_limit);
 
 private:
     nlohmann::json json_scene;
@@ -66,6 +67,12 @@ private:
 
     // Cached per-thread data
     // {
+    struct SHADING_TEST
+    {
+        Imath::C3f  clr;
+        int         px;
+        int         py;
+    };
     struct SHADOW_TEST
     {
         Imath::C3f  clr;
@@ -75,6 +82,7 @@ private:
     {
         std::vector<RTCRayHit> rayhits;
         std::vector<RTCRay> occrays;
+        std::vector<SHADING_TEST> shading_test;
         std::vector<SHADOW_TEST> shadow_test;
         RTCIntersectContext context;
     };

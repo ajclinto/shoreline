@@ -228,6 +228,7 @@ int SCENE::render()
     {
         thread_data[i].rayhits.resize(res.tres * res.tres);
         thread_data[i].occrays.resize(res.tres * res.tres * 2);
+        thread_data[i].shading_test.reserve(res.tres * res.tres);
         thread_data[i].shadow_test.reserve(res.tres * res.tres * 2);
         rtcInitIntersectContext(&thread_data[i].context);
     }
@@ -263,6 +264,8 @@ int SCENE::render()
         igamma = 1.0;
     }
 
+    int reflect_limit = json_scene["reflect_limit"];
+
     // Note the use of grain size == 1 and simple_partitioner below to ensure
     // we get exactly nthreads tasks
     tbb::parallel_for(tbb::blocked_range<int>(0,res.nthreads,1),
@@ -278,7 +281,7 @@ int SCENE::render()
 
             if (tile.xsize == 0) break;
 
-            render_tile(tile, res, light, camera_xform, igamma, shading_mode);
+            render_tile(tile, res, light, camera_xform, igamma, shading_mode, reflect_limit);
 
             if (write(outpipe_fd, &tile, sizeof(TILE)) < 0)
             {
@@ -341,14 +344,16 @@ static inline void init_rayhit(RTCRayHit &rayhit, const Imath::V3f &org, const I
     rayhit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
 }
 
-void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &light, const Imath::M44f &camera_xform, float igamma, SHADING_MODE shading_mode)
+void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &light, const Imath::M44f &camera_xform, float igamma, SHADING_MODE shading_mode, int reflect_limit)
 {
     auto &context = thread_data[tile.tid].context;
     auto &rayhits = thread_data[tile.tid].rayhits;
     auto &occrays = thread_data[tile.tid].occrays;
+    auto &shading_test = thread_data[tile.tid].shading_test;
     auto &shadow_test = thread_data[tile.tid].shadow_test;
 
     // Primary rays
+    shading_test.clear();
     for (int y = 0; y < tile.ysize; y++)
     {
         for (int x = 0; x < tile.xsize; x++)
@@ -370,19 +375,26 @@ void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &l
             camera_xform.multDirMatrix(Imath::V3f(dx, 1, dz), dir);
             RTCRayHit &rayhit = rayhits[poff];
             init_rayhit(rayhit, camera_xform.translation(), dir);
+            SHADING_TEST test;
+            test.clr = Imath::C3f(1,1,1);
+            test.px = px;
+            test.py = py;
+            shading_test.push_back(test);
         }
     }
 
-    rtcIntersect1M(scene, &context, rayhits.data(), tile.ysize * tile.xsize, sizeof(RTCRayHit));
-
-    // Shadow rays
-    shadow_test.clear();
-    for (int y = 0; y < tile.ysize; y++)
+    // Loop over ray levels
+    for (int reflect_level = 0; reflect_level < reflect_limit && !shading_test.empty(); ++reflect_level)
     {
-        for (int x = 0; x < tile.xsize; x++)
+        rtcIntersect1M(scene, &context, rayhits.data(), shading_test.size(), sizeof(RTCRayHit));
+
+        int shading_count = 0;
+        shadow_test.clear();
+        for (int poff = 0; poff < shading_test.size(); poff++)
         {
-            int poff = y*tile.xsize+x;
-            int ioff = (y + tile.yoff) * res.xres + x + tile.xoff;
+            int px = shading_test[poff].px;
+            int py = shading_test[poff].py;
+            int ioff = py * res.xres + px;
             const RTCRayHit &rayhit = rayhits[poff];
             Imath::V3f dir(rayhit.ray.dir_x, rayhit.ray.dir_y, rayhit.ray.dir_z);
             if (shading_mode != PHYSICAL)
@@ -403,30 +415,74 @@ void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &l
             }
             else if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID)
             {
-                Imath::V3f org(rayhit.ray.org_x, rayhit.ray.org_y, rayhit.ray.org_z);
-                org += dir*rayhit.ray.tfar;
+                Imath::V3f P(rayhit.ray.org_x, rayhit.ray.org_y, rayhit.ray.org_z);
+                P += dir*rayhit.ray.tfar;
 
-                Imath::V3f n(rayhit.hit.Ng_x, rayhit.hit.Ng_y, rayhit.hit.Ng_z);
+                BRDF brdf;
+                if (rayhit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID)
+                {
+                    const float inst_color_variance = 0.2F;
+                    brdf = shaders[inst_shader_index[rayhit.hit.geomID]];
+                    brdf.modulate_color(i_hash_eval(rayhit.hit.instID[0]) * inst_color_variance);
+                }
+                else
+                {
+                    brdf = shaders[shader_index[rayhit.hit.geomID]];
+                }
+
+                Imath::V3f Ng(rayhit.hit.Ng_x, rayhit.hit.Ng_y, rayhit.hit.Ng_z);
+                Imath::V3f N;
+
+                if (brdf.is_smooth_N())
+                {
+                    RTCInterpolateArguments interp;
+                    memset(&interp, 0, sizeof(RTCInterpolateArguments));
+                    interp.geometry = rtcGetGeometry(scene, rayhit.hit.geomID);
+                    interp.primID = rayhit.hit.primID;
+                    interp.u = rayhit.hit.u;
+                    interp.v = rayhit.hit.v;
+                    interp.bufferType = RTC_BUFFER_TYPE_VERTEX_ATTRIBUTE;
+                    interp.valueCount = 3;
+                    interp.P = (float *)&N;
+                    rtcInterpolate(&interp);
+                }
+                else
+                {
+                    N = Ng;
+                }
 
                 if (rayhit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID)
                 {
                     auto geo = rtcGetGeometry(scene, rayhit.hit.instID[0]);
                     Imath::M44f xform;
                     rtcGetGeometryTransform(geo, 0, RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR, &xform);
-                    auto tmp = n;
-                    xform.multDirMatrix(tmp, n);
+                    if (N == Ng)
+                    {
+                        auto tmp = Ng;
+                        xform.multDirMatrix(tmp, Ng);
+                        N = Ng;
+                    }
+                    else
+                    {
+                        auto tmpNg = Ng;
+                        xform.multDirMatrix(tmpNg, Ng);
+                        auto tmpN = N;
+                        xform.multDirMatrix(tmpN, N);
+                    }
                 }
 
-                n.normalize();
-                if (n.dot(dir) > 0)
+                if (Ng.dot(dir) > 0)
                 {
-                    n = -n;
+                    Ng = -Ng;
+                    N = -N;
                 }
+
+                Ng.normalize();
+                N.normalize();
+                dir.normalize();
 
                 const float bias = 0.001F;
 
-                int px = x + tile.xoff;
-                int py = y + tile.yoff;
                 auto [h_ioffx,h_ioffy] = p_hash_eval(px, py);
 
                 SHADOW_TEST test;
@@ -444,43 +500,48 @@ void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &l
                 Imath::C3f l_clr;
                 Imath::V3f l_dir;
 
-                BRDF brdf;
-                if (rayhit.hit.instID[0] != RTC_INVALID_GEOMETRY_ID)
+                if (!brdf.is_reflective() || (reflect_level+1) == reflect_limit)
                 {
-                    float inst_color_variance = 0.2F;
-                    brdf = shaders[inst_shader_index[rayhit.hit.geomID]];
-                    brdf.modulate_color(i_hash_eval(rayhit.hit.instID[0]) * inst_color_variance);
+                    brdf.mis_sample(light, b_clr, b_dir, l_clr, l_dir, N, -dir, bsx, bsy, lsx, lsy);
+
+                    if (b_clr != Imath::V3f(0))
+                    {
+                        // BRDF sample
+                        test.clr = b_clr * shading_test[poff].clr;
+                        dir = b_dir;
+
+                        Imath::V3f biasP(P);
+                        biasP += ((dir.dot(Ng) >= 0) ? bias : -bias) * Ng;
+
+                        init_ray(occrays[shadow_test.size()], biasP, dir);
+                        shadow_test.push_back(test);
+                    }
+                    if (l_clr != Imath::V3f(0))
+                    {
+                        // Light sample
+                        test.clr = l_clr * shading_test[poff].clr;
+                        dir = l_dir;
+
+                        Imath::V3f biasP(P);
+                        biasP += ((dir.dot(Ng) >= 0) ? bias : -bias) * Ng;
+
+                        init_ray(occrays[shadow_test.size()], biasP, dir);
+                        shadow_test.push_back(test);
+                    }
                 }
                 else
                 {
-                    brdf = shaders[shader_index[rayhit.hit.geomID]];
-                }
+                    float b_pdf;
+                    brdf.sample(b_clr, b_pdf, dir, N, -dir, bsx, bsy);
 
-                brdf.mis_sample(light, b_clr, b_dir, l_clr, l_dir, n, bsx, bsy, lsx, lsy);
+                    Imath::V3f biasP(P);
+                    biasP += ((dir.dot(Ng) >= 0) ? bias : -bias) * Ng;
 
-                if (b_clr != Imath::V3f(0))
-                {
-                    // BRDF sample
-                    test.clr = b_clr;
-                    dir = b_dir;
-
-                    Imath::V3f bias_org(org);
-                    bias_org += ((dir.dot(n) >= 0) ? bias : -bias) * n;
-
-                    init_ray(occrays[shadow_test.size()], bias_org, dir);
-                    shadow_test.push_back(test);
-                }
-                if (l_clr != Imath::V3f(0))
-                {
-                    // Light sample
-                    test.clr = l_clr;
-                    dir = l_dir;
-
-                    Imath::V3f bias_org(org);
-                    bias_org += ((dir.dot(n) >= 0) ? bias : -bias) * n;
-
-                    init_ray(occrays[shadow_test.size()], bias_org, dir);
-                    shadow_test.push_back(test);
+                    // Trace a new reflection ray
+                    init_rayhit(rayhits[shading_count], biasP, dir);
+                    shading_test[shading_count] = shading_test[poff];
+                    shading_test[shading_count].clr *= b_clr / b_pdf;
+                    shading_count++;
                 }
             }
             else
@@ -489,22 +550,24 @@ void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &l
                 float pdf;
                 dir.normalize();
                 light.evaluate(clr, pdf, dir);
-                pixelcolors[ioff] += clr;
+                pixelcolors[ioff] += clr * shading_test[poff].clr;
             }
         }
-    }
 
-    rtcOccluded1M(scene, &context, occrays.data(), shadow_test.size(), sizeof(RTCRay));
+        rtcOccluded1M(scene, &context, occrays.data(), shadow_test.size(), sizeof(RTCRay));
 
-    // Add unshadowed lighting
-    for (int i = 0; i < shadow_test.size(); i++)
-    {
-        const RTCRay &ray = occrays[i];
-        if (ray.tfar >= 0)
+        // Add unshadowed lighting
+        for (int i = 0; i < shadow_test.size(); i++)
         {
-            int ioff = shadow_test[i].ioff;
-            pixelcolors[ioff] += shadow_test[i].clr;
+            const RTCRay &ray = occrays[i];
+            if (ray.tfar >= 0)
+            {
+                int ioff = shadow_test[i].ioff;
+                pixelcolors[ioff] += shadow_test[i].clr;
+            }
         }
+
+        shading_test.resize(shading_count);
     }
 
     // Finalize the tile

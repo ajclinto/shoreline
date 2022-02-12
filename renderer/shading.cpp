@@ -6,6 +6,7 @@
 
 #include "shading.h"
 #include "common.h"
+#include "ImathVecAlgo.h"
 
 static void get_basis(const Imath::V3f &n, Imath::V3f &u, Imath::V3f &v)
 {
@@ -180,6 +181,7 @@ void BRDF::create_shaders(const nlohmann::json &parameters,
     shader_names.clear();
 
     shaders.push_back(BRDF(parameters["diffuse_color"]));
+    shaders.back().set_smooth_N();
     shader_names.push_back("default");
 
     shaders.push_back(BRDF(parameters["branch_color"]));
@@ -190,6 +192,7 @@ void BRDF::create_shaders(const nlohmann::json &parameters,
     shader_names.push_back("leaf");
 
     shaders.push_back(BRDF(parameters["water_color"]));
+    shaders.back().set_reflective();
     shader_names.push_back("water");
 }
 
@@ -198,13 +201,18 @@ BRDF::BRDF(const nlohmann::json &color)
     m_clr = json_to_color(color);
 }
 
-void BRDF::sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f &n, float sx, float sy) const
+void BRDF::sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f &n, const Imath::V3f &d, float sx, float sy) const
 {
     Imath::V3f u, v;
     get_basis(n, u, v);
 
     float a = sx * 2 * static_cast<float>(M_PI);
-    if (sy < m_transmit_ratio)
+    if (m_reflect)
+    {
+        dir = Imath::reflect(d, n);
+        pdf = 1e6;
+    }
+    else if (sy < m_transmit_ratio)
     {
         sy /= m_transmit_ratio;
         float r = sqrtf(sy);
@@ -229,8 +237,14 @@ void BRDF::sample(Imath::C3f &clr, float &pdf, Imath::V3f &dir, const Imath::V3f
     clr = m_clr * pdf;
 }
 
-void BRDF::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir, const Imath::V3f &n) const
+void BRDF::evaluate(Imath::C3f &clr, float &pdf, const Imath::V3f &dir, const Imath::V3f &n, const Imath::V3f &d) const
 {
+    if (m_reflect)
+    {
+        pdf = 0;
+        clr = m_clr * pdf;
+        return;
+    }
     float rz = n.dot(dir);
     if (rz > 0)
     {
@@ -248,13 +262,14 @@ void BRDF::mis_sample(const SUN_SKY_LIGHT &light,
                       Imath::C3f &b_clr, Imath::V3f &b_dir,
                       Imath::C3f &l_clr, Imath::V3f &l_dir,
                       const Imath::V3f &n,
+                      const Imath::V3f &d,
                       float bsx, float bsy,
                       float lsx, float lsy) const
 {
     float b_pdf;
     float l_pdf;
 
-    sample(b_clr, b_pdf, b_dir, n, bsx, bsy);
+    sample(b_clr, b_pdf, b_dir, n, d, bsx, bsy);
     light.sample(l_clr, l_pdf, l_dir, lsx, lsy);
 
     Imath::C3f bl_clr;
@@ -262,7 +277,7 @@ void BRDF::mis_sample(const SUN_SKY_LIGHT &light,
     float bl_pdf;
     float lb_pdf;
 
-    evaluate(bl_clr, bl_pdf, l_dir, n);
+    evaluate(bl_clr, bl_pdf, l_dir, n, d);
     light.evaluate(lb_clr, lb_pdf, b_dir);
 
     // Power heuristic - note I'm leaving out one factor of

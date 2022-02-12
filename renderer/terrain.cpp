@@ -83,6 +83,14 @@ void TERRAIN::embree_geometry(RTCDevice device, RTCScene scene,
                                                            RTC_FORMAT_FLOAT3,
                                                            sizeof(Imath::V3f),
                                                            point_count);
+        // Normal seems to be counted as a vertex attribute
+        rtcSetGeometryVertexAttributeCount(geom, 1);
+        Imath::V3f* normals = (Imath::V3f*) rtcSetNewGeometryBuffer(geom,
+                                                           RTC_BUFFER_TYPE_NORMAL,
+                                                           0,
+                                                           RTC_FORMAT_FLOAT3,
+                                                           sizeof(Imath::V3f),
+                                                           point_count);
         unsigned* indices = (unsigned*) rtcSetNewGeometryBuffer(geom,
                                                                 RTC_BUFFER_TYPE_INDEX,
                                                                 0,
@@ -102,7 +110,8 @@ void TERRAIN::embree_geometry(RTCDevice device, RTCScene scene,
                 float xpos = ypos * (x/(float)(xres-1) - 0.5F) * xscale * 2;
                 vertices[voff][0] = xpos + terrain_pos[0];
                 vertices[voff][1] = ypos + terrain_pos[1];
-                vertices[voff][2] = 0;
+                // TODO
+                vertices[voff][2] = 0.5*(sin(xpos) + sin(ypos));
                 if (y < yres-1 && x < xres-1)
                 {
                     indices[4*ioff+0] = y*xres+x;
@@ -111,6 +120,23 @@ void TERRAIN::embree_geometry(RTCDevice device, RTCScene scene,
                     indices[4*ioff+3] = (y+1)*xres+x;
                     ioff++;
                 }
+            }
+        }
+
+        // Calculate smooth normals
+        memset(normals, 0, point_count*sizeof(Imath::V3f));
+        for (int y = 0; y < yres-1; y++)
+        {
+            for (int x = 0; x < xres-1; x++)
+            {
+                voff = y*xres + x;
+                Imath::V3f nml =
+                    (vertices[voff+1]-vertices[voff]).cross(vertices[voff+xres]-vertices[voff]) +
+                    (vertices[voff+xres+1]-vertices[voff+xres]).cross(vertices[voff+xres+1]-vertices[voff+1]);
+                normals[y*xres+x] += nml;
+                normals[y*xres+x+1] += nml;
+                normals[(y+1)*xres+x] += nml;
+                normals[(y+1)*xres+x+1] += nml;
             }
         }
 

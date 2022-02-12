@@ -206,6 +206,8 @@ void MAIN_WINDOW::save_as()
     }
     m_renderview->save(out);
     m_open_file = fname;
+
+    setWindowTitle("Shoreline Renderer - " + m_open_file);
 }
 
 void MAIN_WINDOW::open()
