@@ -504,7 +504,9 @@ void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &l
                 {
                     brdf.mis_sample(light, b_clr, b_dir, l_clr, l_dir, N, -dir, bsx, bsy, lsx, lsy);
 
-                    if (b_clr != Imath::V3f(0))
+                    // NOTE: Optimize to avoid sending any shadow rays below
+                    // the horizon by checking for a positive dir[2]
+                    if (b_clr != Imath::V3f(0) && b_dir[2] >= 0)
                     {
                         // BRDF sample
                         test.clr = b_clr * shading_test[poff].clr;
@@ -516,7 +518,7 @@ void SCENE::render_tile(const TILE &tile, const RES &res, const SUN_SKY_LIGHT &l
                         init_ray(occrays[shadow_test.size()], biasP, dir);
                         shadow_test.push_back(test);
                     }
-                    if (l_clr != Imath::V3f(0))
+                    if (l_clr != Imath::V3f(0) && l_dir[2] >= 0)
                     {
                         // Light sample
                         test.clr = l_clr * shading_test[poff].clr;

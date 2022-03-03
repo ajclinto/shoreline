@@ -192,6 +192,7 @@ void BRDF::create_shaders(const nlohmann::json &parameters,
     shader_names.push_back("leaf");
 
     shaders.push_back(BRDF(parameters["water_color"]));
+    shaders.back().set_smooth_N();
     shaders.back().set_reflective();
     shader_names.push_back("water");
 }

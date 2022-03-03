@@ -25,6 +25,12 @@ public:
                          const std::vector<std::string> &shader_names) const;
 
 private:
+    RTCGeometry create_terrain_grid(RTCDevice device,
+                                    int &xres, int &yres,
+                                    Imath::V3f *&vertices,
+                                    Imath::V3f *&normals) const;
+
+private:
     nlohmann::json m_parameters;
 };
 
